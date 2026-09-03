@@ -21,9 +21,9 @@ Extracted directly from production monorepos, these libraries solve the three mo
 
 | Artifact | Namespace | Solves | Deep Dive |
 | :--- | :--- | :--- | :--- |
-| **`io.github.bangmodcloud/reagent-form`** | `bangmod.form.*` | Eliminates form state boilerplate. Produces ready-to-spread props for `[:input ...]` and handles sync/async validation. | [📖 Form Docs](docs/form.md) |
+| **`io.github.bangmodcloud/reagent-form`** | `bangmod.form.*` | Eliminates form state boilerplate. Produces ready-to-spread props, integrates easily with 3rd-party controls (DatePickers, Selects), handles dynamic `FieldArray`s and sync/async validation. | [📖 Form Docs](docs/form.md) |
 | **`io.github.bangmodcloud/reagent-http-api`** | `bangmod.http-api.*` | Declarative endpoints with automatic Bearer token injection, single-flight token refresh, and dual GET/SSE streaming on one URI. | [📖 HTTP/SSE Docs](docs/http-api.md) |
-| **`io.github.bangmodcloud/reagent-router`** | `bangmod.router.*` | Decentralized routing. Feature modules own their routes. Reactive URL params and built-in route health checking (`registration-report`). | [📖 Router Docs](docs/router.md) |
+| **`io.github.bangmodcloud/reagent-router`** | `bangmod.router.*` | Decentralized, feature-first routing for large modular apps (15+ features with zero merge conflicts). Reactive URL params and built-in route health checking (`registration-report`). | [📖 Router Docs](docs/router.md) |
 
 ---
 

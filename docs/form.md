@@ -16,6 +16,7 @@ Managing form state in front-end SPAs often involves tedious boilerplate: bindin
 * 🛡️ **Polite error reporting:** Validation errors stay hidden until a field has been touched or the user attempts to submit.
 * ⚡ **Async submission ready:** Return a `core.async` channel or a direct result from `on-submit`. Submitting states and disabled states are tracked automatically.
 * 🧩 **Modular & composable:** First-class support for nested objects (`FieldGroup`) and dynamic repeating rows (`FieldArray`).
+* 🔌 **Seamless 3rd-party integration:** Easily bind custom UI controls (Ant Design DatePickers, custom dropdowns, rich text editors).
 
 ---
 
@@ -157,37 +158,155 @@ A validator is a simple 1-arg function receiving the field's current value:
 
 ---
 
-## Nested Forms and Arrays
+## Integrating with 3rd-Party UI Components (e.g. Ant Design DatePicker)
 
-### `FieldGroup` (Nested Maps)
-Used when a section of your form corresponds to a nested map (e.g. `:shipping-address`):
+Standard HTML `<input>` elements pass a synthetic DOM event where the value lives in `(.. event -target -value)`. 
+
+However, modern UI libraries like **Ant Design (`antd`)**, **React-Select**, or **MUI** typically pass the raw selected value (or a Date/Day.js object) directly into `onChange`.
+
+You can integrate these components with `reagent-form` by overriding `:on-change` using `change-field-value`:
+
+### Example: Ant Design DatePicker Component
+
+First, create a clean Reagent wrapper around the AntD `DatePicker`:
 
 ```clojure
-[form/FieldGroup {:form parent-form :name :shipping-address}
- (fn [nested-form]
-   (let [{:keys [register-field]} (form/make-api nested-form)]
-     [:div.address-group
-      [:input (register-field :street {:placeholder "Street Address"})]
-      [:input (register-field :city {:placeholder "City"})]]))]
+(ns myapp.components.datepicker
+  (:require ["antd" :refer [DatePicker]]
+            ["dayjs" :as dayjs]))
+
+(defn date-picker [{:keys [value on-change on-blur class is-showtime]}]
+  [:div
+   [:> DatePicker
+    {:showTime    is-showtime
+     :value       (when value (dayjs. value))
+     :class       class
+     :on-blur     (or on-blur #())
+     ;; Ant Design passes (date, date-string) directly:
+     :on-change   (fn [date _date-string]
+                    (when on-change
+                      (on-change (if date (js->clj date :keywordize-keys true) nil))))
+     :style       {:width "100%"}}]])
 ```
 
-### `FieldArray` (Dynamic Repeating Rows)
-Used for repeatable sub-forms like invoice line items or dynamic tag lists:
+### Using it inside your form:
+
+Notice how `register-field` pairs with `change-field-value` and `get-field-display-error`:
+
+```clojure
+(defn voucher-dates-form [form-api]
+  (let [{:keys [register-field change-field-value get-field-display-error]} form-api]
+    [:div.form-row
+     [:div.form-group
+      [:label "Start Date"]
+      [date-picker (register-field :startDate
+                     {:validators  [v/required]
+                      ;; Pass the raw date value directly to form state:
+                      :on-change   #(change-field-value :startDate %)
+                      :is-showtime true
+                      :class       (when (get-field-display-error :startDate) "error-picker")})]
+      (when-let [err (get-field-display-error :startDate)]
+        [:div.text-danger err])]
+
+     [:div.form-group
+      [:label "Expire Date"]
+      [date-picker (register-field :expireDate
+                     {:validators  [v/required]
+                      :on-change   #(change-field-value :expireDate %)
+                      :is-showtime true
+                      :class       (when (get-field-display-error :expireDate) "error-picker")})]
+      (when-let [err (get-field-display-error :expireDate)]
+        [:div.text-danger err])]]))
+```
+
+---
+
+## Nested Forms and Arrays
+
+### `FieldArray`: Real-World Patterns
+
+`FieldArray` handles lists of sub-forms registered under one parent field name. 
+
+#### Pattern A: Dynamic Add / Remove Items (e.g. Invoice Items or Hardware Slots)
 
 ```clojure
 [form/FieldArray {:form parent-form :name :items}
  (fn [add-fn remove-fn item-forms]
-   [:div
-    (map-indexed
-     (fn [idx item-form]
-       (let [{:keys [register-field]} (form/make-api item-form)]
-         ^{:key idx}
-         [:div.row
-          [:input (register-field :item-name)]
-          [:input (register-field :quantity {:type "number"})]
-          [:button {:type "button" :on-click #(remove-fn idx)} "Remove"]]))
-     item-forms)
-    [:button {:type "button" :on-click #(add-fn {:quantity 1})} "Add Item"]])]
+   [:div.items-container
+    (doall
+     (map-indexed
+      (fn [idx item-form]
+        (let [{:keys [register-field get-field-display-error]} (form/make-api item-form)]
+          ^{:key idx}
+          [:div.item-row
+           [:input.form-control (register-field :title {:placeholder "Item title"})]
+           [:input.form-control (register-field :qty {:type "number" :validators [v/required v/positive]})]
+           [:button.btn-danger {:type "button" :on-click #(remove-fn idx)} "Remove"]
+           (when-let [err (get-field-display-error :qty)]
+             [:span.error err])]))
+      item-forms))
+
+    [:button.btn-secondary {:type "button" :on-click #(add-fn {:qty 1})} "+ Add Item"]])]
+```
+
+#### Pattern B: Multi-Currency Pricing Table (Pre-populated Rows)
+
+In multi-region enterprise applications, you often have a fixed set of supported currencies, and the user must input the price for each one:
+
+```clojure
+;; Initial values provided to create-form:
+;; {:values [{:currency "THB" :price 100}
+;;           {:currency "USD" :price 3.5}]}
+
+[form/FieldArray {:form form-keyword :name :values}
+ (fn [_add _remove array-forms]
+   [:div.currency-table
+    (doall
+     (map-indexed
+      (fn [idx currency-form]
+        (let [{:keys [register-field get-field-display-value get-field-display-error]}
+              (form/make-api currency-form)
+              currency (get-field-display-value :currency)]
+          ^{:key (str "currency-" idx)}
+          [:div.input-group.my-2
+           ;; Hidden field to preserve currency identifier
+           [:input.d-none (register-field :currency {})]
+           
+           [:input.form-control
+            (register-field :price
+              {:validators  [v/required v/number (v/greater-than 0)]
+               :type        "number"
+               :placeholder "0.00"
+               :class       (when (get-field-display-error :price) "form-error")})]
+           
+           [:span.input-group-text currency]
+           (when-let [err (get-field-display-error :price)]
+             [:div.text-danger err])]))
+      array-forms))])]
+```
+
+---
+
+### `FieldGroup`: Nested Objects
+
+When a form field is an isolated nested map (e.g. `:billing-address` inside a user profile):
+
+```clojure
+[form/FieldGroup {:form parent-form :name :billing-address}
+ (fn [nested-form]
+   (let [{:keys [register-field get-field-display-error]} (form/make-api nested-form)]
+     [:div.address-group
+      [:div.form-group
+       [:label "Street Address"]
+       [:input.form-control (register-field :street {:validators [v/required]})]
+       (when-let [err (get-field-display-error :street)]
+         [:span.error err])]
+
+      [:div.form-group
+       [:label "City"]
+       [:input.form-control (register-field :city {:validators [v/required]})]
+       (when-let [err (get-field-display-error :city)]
+         [:span.error err])]]))]]
 ```
 
 ---
@@ -227,11 +346,8 @@ Used for repeatable sub-forms like invoice line items or dynamic tag lists:
 ## Gotchas & Pro-Tips
 
 > [!NOTE]
-> **Native DOM Events vs Custom Components**
-> The default `:on-change` generated by `register-field` extracts `(.. event -target -value)`. If you are wrapping a third-party React component that returns raw values instead of synthetic events (e.g. `(on-change 42)`), supply your own `:on-change` function in the `field-config` map:
-> ```clojure
-> (register-field :score {:on-change (fn [val] (change-field-value :score val))})
-> ```
+> **Custom Components & `:on-change`**
+> When binding 3rd-party components (like React DatePickers or Dropdowns), use `:on-change #(change-field-value :field-name %)` to store the raw value into the form state.
 
 > [!TIP]
 > **Placeholder Defaults**

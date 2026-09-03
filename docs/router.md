@@ -92,6 +92,98 @@ io.github.bangmodcloud/reagent-router {:mvn/version "0.1.0"}
 
 ---
 
+## Multi-Module Architecture: Scaling to 15+ Features
+
+In production SPAs (such as cloud management consoles, ERPs, or dashboards), having 15–20+ distinct features (`account`, `voucher`, `hosting`, `network`, `billing`, etc.) is standard.
+
+### The Problem with Centralized Routing
+With conventional routers, all routes are dumped into a single `routes.cljs` file:
+* 💥 **Git Merge Conflicts:** Five developers working on different features simultaneously modify the same central routing file.
+* 🍝 **Spaghetti Imports:** The root router imports hundreds of view namespaces from every corner of the codebase.
+* ❌ **Fragile Encapsulation:** Extracting, renaming, or deleting a feature requires surgical edits across central routing and view files.
+
+### The `reagent-router` Feature-First Solution
+Each feature folder is fully self-contained. It owns its views, events, and route table:
+
+```
+src/myapp/feature/
+├── account/
+│   ├── routes.cljs   # ["/account" {"/admin" ... "/customer" ...}]
+│   ├── view/
+│   └── core.cljs     # (defn init [] (router/register-routes routes/account-routes))
+├── voucher/
+│   ├── routes.cljs   # ["/voucher" {"" ... "/new" ...}]
+│   ├── view/
+│   └── core.cljs     # (defn init [] (router/register-routes routes/voucher-routes))
+├── hosting/
+│   ├── routes.cljs   # ["/hosting" {"/servers" ... "/packages" ...}]
+│   └── core.cljs
+└── billing/
+    ├── routes.cljs   # ["/billing" ...]
+    └── core.cljs
+```
+
+#### 1. Inside a Feature: Define its own routes
+```clojure
+;; myapp/feature/voucher/routes.cljs
+(ns myapp.feature.voucher.routes
+  (:require [myapp.feature.voucher.view.listing :as listing-page]
+            [myapp.feature.voucher.view.new :as new-voucher-page]
+            [myapp.feature.voucher.view.detail :as detail-page]))
+
+(def voucher-routes
+  ["/voucher" {""        [:voucher-listing listing-page/component]
+               "/new"    [:new-voucher new-voucher-page/component]
+               ["/" :id] [:voucher-detail detail-page/component]}])
+```
+
+#### 2. Inside the Feature Entrypoint: Register its routes
+```clojure
+;; myapp/feature/voucher/core.cljs
+(ns myapp.feature.voucher.core
+  (:require [bangmod.router.core :as router]
+            [myapp.feature.voucher.routes :as routes]))
+
+(defn init []
+  (router/register-routes routes/voucher-routes))
+```
+
+#### 3. In the App Core: Wire features together cleanly
+```clojure
+;; myapp/core.cljs
+(ns myapp.core
+  (:require [bangmod.router.core :as router]
+            [bangmod.router.views :as router-views]
+            [myapp.feature.account.core :as account-feature]
+            [myapp.feature.voucher.core :as voucher-feature]
+            [myapp.feature.hosting.core :as hosting-feature]
+            [myapp.feature.billing.core :as billing-feature]))
+
+(defn init []
+  ;; ===== Initialize all features independently
+  (account-feature/init)
+  (voucher-feature/init)
+  (hosting-feature/init)
+  (billing-feature/init)
+
+  ;; ===== Start router once (aggregates all registered feature routes)
+  (router/start! {:default-component not-found-page}))
+
+(defn root-layout []
+  [:div.app-shell
+   [sidebar-navigation]
+   [:main.content-area
+    ;; One line renders the active component of whichever feature matched:
+    [router-views/matched-route-panel]]])
+```
+
+### Why this is a game-changer:
+1. **Zero Merge Conflicts:** Team A working on `voucher` and Team B working on `hosting` never touch the same files.
+2. **Conditional / Feature Toggling:** Need to disable a feature for certain user roles or tenants? Simply don't call `(feature/init)` at boot.
+3. **Effortless Code Removal:** To delete a feature, delete its folder and remove one `init` call in `myapp.core`. No dangling route references left behind.
+
+---
+
 ## Route Syntax
 
 `reagent-router` uses standard [bidi](https://github.com/juxt/bidi) data structures, with one key enhancement: the leaf node is a vector of `[handler-keyword component]` instead of a bare keyword.

@@ -1,38 +1,47 @@
 # reagent-router
 
-`io.github.bangmodcloud/reagent-router` — namespace `bangmod.router.*`
+[![Clojars Project](https://img.shields.io/clojars/v/io.github.bangmodcloud/reagent-router.svg?color=blue)](https://clojars.org/io.github.bangmodcloud/reagent-router)
 
-A thin, opinionated wrapper around [bidi](https://github.com/juxt/bidi) (route matching) and
-[pushy](https://github.com/kibu-oss/pushy) (HTML5 history) for Reagent/re-frame single-page
-apps. Each feature of your app registers its own route table independently; the router owns
-matching the current URL against all of them and re-rendering whichever component matched.
+A modular, feature-first routing library for [Reagent](https://reagent-project.github.io/) and [re-frame](https://day8.github.io/re-frame/) powered by [bidi](https://github.com/juxt/bidi) and [pushy](https://github.com/kibu-oss/pushy).
 
-## Install
+---
 
-Add the artifact — see the [root README](../README.md#installation) for the full
-`deps.edn` / git-dependency snippets.
+## Why reagent-router?
 
-## Quick start
+Most SPA routers force you to maintain a single, monolithic routing file where every route and page component across the entire app must be imported. In large codebases, this creates tight coupling and merge conflicts.
 
-A minimal app with two routes and a 404 fallback. This is the same shape every feature in a
-larger app repeats: a `routes` table per feature, a component per route, one `start!` call at
-boot.
+`reagent-router` takes a **feature-first** approach:
+
+* 🧩 **Decentralized Routes:** Every feature module defines and registers its own route table independently.
+* 🖼️ **Zero-Boilerplate Rendering:** Just place `[router-views/matched-route-panel]` in your layout. No manual `case` or `condp` switching required.
+* ⚡ **Reactive Parameters:** Read current path parameters and query strings directly through Reagent reactions (`atom-params`, `atom-query-params`).
+* 🩺 **Built-in Route Auditing (`registration-report`):** Catch blank-screen bugs before your users do. Detects orphan routes, dead components, and duplicates automatically.
+
+---
+
+## Installation
+
+Add to your `deps.edn`:
 
 ```clojure
+io.github.bangmodcloud/reagent-router {:mvn/version "0.1.0"}
+```
+
+---
+
+## Quick Start
+
+### 1. Define Features & Views
+
+```clojure
+;; feature/home/view.cljs
 (ns myapp.feature.home.view)
 
 (defn home-page []
-  [:div "Home"])
-```
+  [:div.page
+   [:h1 "Welcome Home"]])
 
-```clojure
-(ns myapp.feature.not-found.view)
-
-(defn not-found-panel []
-  [:div "No component found for this route."])
-```
-
-```clojure
+;; feature/home/routes.cljs
 (ns myapp.feature.home.routes
   (:require [myapp.feature.home.view :as view]))
 
@@ -40,7 +49,21 @@ boot.
   ["" {"/" [:home view/home-page]}])
 ```
 
+### 2. Define a 404 Fallback View
+
 ```clojure
+;; feature/not_found/view.cljs
+(ns myapp.feature.not-found.view)
+
+(defn not-found-page []
+  [:div.page
+   [:h1 "404 - Page Not Found"]])
+```
+
+### 3. Mount the Router in Your App Root
+
+```clojure
+;; core.cljs
 (ns myapp.core
   (:require [reagent.dom :as rdom]
             [bangmod.router.core :as router]
@@ -48,162 +71,162 @@ boot.
             [myapp.feature.home.routes :as home-routes]
             [myapp.feature.not-found.view :as not-found]))
 
-(defn root []
-  [:div
-   [router-views/matched-route-panel]])
+(defn app-shell []
+  [:div.app-container
+   [:nav
+    [:a {:href (router/url-for :home)} "Home"]]
+   [:main
+    ;; Automatically renders the component bound to the current route:
+    [router-views/matched-route-panel]]])
 
 (defn init []
-  ;; Each feature registers its own table; call this once per feature, in any order.
+  ;; 1. Register routes from any number of features (in any order)
   (router/register-routes home-routes/routes)
-  ;; Call once, after every feature has registered. Unmatched URLs render
-  ;; `:default-component`.
-  (router/start! {:default-component not-found/not-found-panel})
-  (rdom/render [root] (.getElementById js/document "app")))
+
+  ;; 2. Start the router with a fallback component
+  (router/start! {:default-component not-found/not-found-page})
+
+  ;; 3. Mount Reagent root
+  (rdom/render [app-shell] (.getElementById js/document "app")))
 ```
 
-`register-routes` takes a [bidi](https://github.com/juxt/bidi) route table where each leaf is
-`[handler-keyword component]` instead of bidi's usual bare handler keyword:
+---
+
+## Route Syntax
+
+`reagent-router` uses standard [bidi](https://github.com/juxt/bidi) data structures, with one key enhancement: the leaf node is a vector of `[handler-keyword component]` instead of a bare keyword.
 
 ```clojure
-["" {"/account" [:account view/page]}]
+(def routes
+  ["" [;; Static route
+       ["/" [:home home-view]]
+       ;; Path parameter route (:id is extracted into atom-params)
+       [["/projects/" :id] [:project-detail project-view]]
+       ;; Nested route prefix
+       ["/settings"
+        {"/profile" [:settings-profile profile-view]
+         "/billing" [:settings-billing billing-view]}]]])
 ```
 
-`:account` is the route's identity everywhere else in this API (`url-for`, `navigate!`,
-`atom-matched-route`); `view/page` is the component `matched-route-panel` renders when that
-route is current.
+---
 
-## API reference
+## Navigation & URL Generation
 
-From `bangmod.router.core`:
+### Programmatic Navigation (`navigate!`)
+Push a new URL to HTML5 history and trigger view re-rendering:
 
-- **`(start! {:default-component fallback-component})`** — starts the router: installs the
-  fallback component for unmatched URLs, wires re-frame integration, and starts listening to
-  history changes. Call exactly once, after every feature has called `register-routes`.
-- **`(register-routes routes)`** — merges one bidi route table into the app's combined route
-  set. Each feature calls this itself during its own init, independent of the others.
-- **`(url-for handler & args)`** — builds a URL path (and query string) for a route handler
-  keyword. `args` are passed to `bidi/path-for` for path-parameter substitution; a map
-  containing a `:query` key contributes a query string instead, e.g.
-  `(router/url-for :account {:query {:tab "billing"}})`.
-- **`(navigate! handler)`** — pushes a new history entry and re-matches, as if the user had
-  followed a link to that route. `handler` is a route keyword (resolved with `url-for`) or a
-  literal URL string.
-- **`atom-params`** — reagent reaction over the current route's path parameters (`{}` if
-  none).
-- **`atom-query-params`** — reagent reaction over the current route's query parameters.
-- **`atom-matched-route`** — reagent reaction over the current route's handler keyword
-  (`:default` when nothing matched).
-- **`(registration-report)`** — debugging helper, described below.
+```clojure
+;; Navigate by route keyword
+(router/navigate! :home)
 
-From `bangmod.router.views`:
+;; Or by literal path
+(router/navigate! "/settings/profile")
+```
 
-- **`(matched-route-panel)`** — renders whatever component is registered for
-  `atom-matched-route`'s current value. Drop it once, anywhere in your root component, in
-  place of a hand-written `case`/`condp` over the current route.
+### URL Generation (`url-for`)
+Generates safe, reverse-routed URL strings:
 
-### `registration-report`
+```clojure
+;; Path parameter substitution:
+(router/url-for :project-detail :id 42)
+;; => "/projects/42"
+
+;; Adding query parameters:
+(router/url-for :project-detail :id 42 {:query {:tab "logs" :sort "asc"}})
+;; => "/projects/42?tab=logs&sort=asc"
+```
+
+---
+
+## Reactive Route State
+
+Access route information reactively inside any Reagent component without passing props down:
+
+```clojure
+(ns myapp.feature.project.view
+  (:require [bangmod.router.core :as router]))
+
+(defn project-view []
+  (let [{:keys [id]} @router/atom-params
+        {:keys [tab]} @router/atom-query-params
+        current-route @router/atom-matched-route]
+    [:div
+     [:h2 "Project ID: " id]
+     [:p "Active Tab: " (or tab "overview")]
+     [:small "Matched Handler: " (str current-route)]]))
+```
+
+* `router/atom-matched-route` — Keyword of currently active route (or `:default`).
+* `router/atom-params` — Map of path parameters (e.g. `{:id "42"}`).
+* `router/atom-query-params` — Map of query parameters parsed from the URL.
+
+---
+
+## Killer Feature: Route Health Check (`registration-report`)
+
+In single-page apps, typos between route keys and components can lead to silent dead ends. `registration-report` audits your entire compiled routing table:
 
 ```clojure
 (router/registration-report)
-;; => {:routed [...]                 ; handler keywords the compiled route table can match
-;;     :registered [...]             ; handler keywords with a component installed
-;;     :duplicates [...]             ; handler keywords registered more than once
-;;     :orphan-routes [...]          ; routable but nothing renders for them — blank page
-;;     :orphan-registrations [...]}  ; a component installed for a route nothing points at
 ```
 
-Call it from a REPL, or wire it into a dev-only sanity check after all features have
-initialized, to catch two classes of mistake the router cannot surface on its own: a route
-table entry with no matching component (renders the default/fallback silently), and a
-component registered under a keyword no route table actually produces (dead code).
-
-## Real-world example
-
-A feature module registering its own routes at init:
-
+**Output:**
 ```clojure
-(ns myapp.feature.account.routes
-  (:require [myapp.feature.account.view :as view]))
-
-(def routes
-  ["" {"/account" [:account view/page]}])
+{:routed               [:home :project-detail :settings-profile]
+ :registered           [:home :project-detail :settings-profile :old-dashboard]
+ :duplicates           []
+ :orphan-routes        []
+ :orphan-registrations [:old-dashboard]}
 ```
 
-```clojure
-(ns myapp.feature.account.core
-  (:require [bangmod.router.core :as router]
-            [myapp.feature.account.routes :as routes]))
+| Field | Meaning | Impact |
+| :--- | :--- | :--- |
+| `:routed` | All route handlers recognized in route tables. | — |
+| `:registered` | All handlers that have a mounted component. | — |
+| `:duplicates` | Handlers declared more than once. | Second registration silently shadows the first. |
+| `:orphan-routes` | Routes in the table that have **no component**. | **User sees a blank/fallback page!** |
+| `:orphan-registrations` | Components registered for routes that don't exist. | Dead code. |
 
-(defn init []
-  (router/register-routes routes/routes))
-```
+> [!TIP]
+> **Dev Sanity Check:** Wire `(router/registration-report)` into a development assertion or test step after all features initialize to guarantee that no orphan routes exist in your app.
 
-App boot, wiring every feature together and starting the router last:
+---
 
-```clojure
-(ns myapp.core
-  (:require [bangmod.router.core :as router]
-            [bangmod.http-api.core :as http-api]
-            [myapp.feature.authentication.core :as authentication-feature]
-            [myapp.feature.account.core :as account-feature]
-            [myapp.feature.admin.core :as admin-feature]
-            [myapp.feature.projects.core :as projects-feature]
-            [myapp.feature.docs.core :as docs-feature]
-            [myapp.feature.not-found.view :as not-found]
-            [myapp.auth :as auth]))
+## API Reference
 
-(defn init []
-  (http-api/set-auth-token-provider! (fn [] @auth/access-token))
-  ;; ===== feature initialization (each registers its own routes)
-  (authentication-feature/init)
-  (account-feature/init)
-  (admin-feature/init)
-  (projects-feature/init)
-  (docs-feature/init)
-  ;; Unmatched routes fall back to the 404 page.
-  (router/start! {:default-component not-found/not-found-panel}))
-```
+### Core Routing (`bangmod.router.core`)
 
-`navigate!` used to leave a page once some app state becomes true — here, redirecting away
-from the login screen once the user is authenticated. The full component (including the login
-form itself) is in the [`reagent-form` real-world example](form.md#real-world-example); this
-is the redirect half of the same `login-panel`:
+| Function / Var | Signature | Description |
+| :--- | :--- | :--- |
+| `start!` | `[{:keys [default-component]}]` | Initializes HTML5 history listener and registers 404 fallback. Call once at boot. |
+| `register-routes` | `[routes]` | Merges a bidi route table into the application route hierarchy. |
+| `url-for` | `[handler & args]` | Generates path strings with path param substitution and optional `{:query {...}}`. |
+| `navigate!` | `[handler-or-url]` | Pushes new browser history state and renders corresponding component. |
+| `registration-report`| `[]` | Diagnostic report identifying duplicate, orphan, or missing routes. |
+| `atom-matched-route` | Reagent reaction | Reactive keyword of active route (defaults to `:default`). |
+| `atom-params` | Reagent reaction | Reactive map of matched path params. |
+| `atom-query-params` | Reagent reaction | Reactive map of current query string params. |
 
-```clojure
-(ns myapp.feature.authentication.view
-  (:require [reagent.core :as r]
-            [re-frame.core :as rf]
-            [bangmod.router.core :as router]))
+### Views (`bangmod.router.views`)
 
-(defn login-panel []
-  (let [user-sub (rf/subscribe [:auth/user])
-        redirect! (fn [] (when @user-sub (router/navigate! :account)))]
-    (r/create-class
-     {:component-did-mount  (fn [_] (redirect!))
-      :component-did-update (fn [_] (redirect!))
-      :reagent-render       (fn [] [:div "..."])})))
-```
+| Component | Description |
+| :--- | :--- |
+| `[matched-route-panel]` | Reagent component that dynamically mounts whichever view component corresponds to the active route. |
 
-## Gotchas
+---
 
-- **`start!` is boot-time, once.** Everything that calls `register-routes` must run before
-  it — the fallback component and the history listener are installed by `start!`, and routes
-  registered afterwards still work, but nothing renders them until the next navigation.
-- **A duplicate route registration is a silent shadow, on purpose, differently in dev and
-  prod.** Two components registered under the same handler keyword is a `defmulti`/`defmethod`
-  under the hood — the second `defmethod` silently replaces the first. In a `goog.DEBUG` build
-  this throws immediately, loud and at the source of the mistake. In a production build it
-  only logs to the console: a shadowed route is a bug, but a white screen in production is a
-  worse one. `registration-report`'s `:duplicates` is how you find this class of bug in a
-  build where it doesn't throw.
-- **`navigate!` belongs in a lifecycle callback, not in render.** Call it from
-  `component-did-mount` / `component-did-update` (as in the example above), a re-frame event
-  handler, or any other code that isn't itself a component's render function. Calling it
-  during render changes the matched route while that render is still in progress, which can
-  unmount the very component that triggered the navigation partway through.
-- **An orphan route renders the default component, not an error.** If a route table entry has
-  no corresponding component registration (a typo in the handler keyword between the routes
-  file and the component's `defmethod`, most commonly), the URL matches, but
-  `matched-route-panel` has nothing to render for it and falls through to whatever
-  `:default-component` is — no exception, no console warning. `registration-report`'s
-  `:orphan-routes` catches this.
+## Gotchas & Pro-Tips
+
+> [!CAUTION]
+> **Never call `navigate!` inside a render function**
+> Triggering `navigate!` during the render pass will alter the routing state while React is still rendering, which can unmount the component mid-render. Always call `navigate!` inside lifecycle callbacks (`component-did-mount`, `component-did-update`) or event handlers (clicks, button presses).
+
+> [!IMPORTANT]
+> **Order of Initialization**
+> All features should call `(router/register-routes ...)` **before** calling `(router/start! ...)`. Any routes registered after `start!` will still match on subsequent URL changes, but will not be reflected on initial page load.
+
+> [!NOTE]
+> **Duplicate Route Handling in Dev vs Prod**
+> If two components are accidentally registered under the exact same route keyword:
+> - In development (`goog.DEBUG = true`): Throws an explicit exception immediately with the offending keyword.
+> - In production: Logs a warning to the console and renders the latest registered component, avoiding white-screen crashes for end users.

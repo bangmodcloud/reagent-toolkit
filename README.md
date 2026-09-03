@@ -1,133 +1,165 @@
 # reagent-toolkit
 
-Three small, independent ClojureScript libraries for [Reagent](https://reagent-project.github.io/)
-/ [re-frame](https://day8.github.io/re-frame/) front-ends. They live in one repo and
-release together, but ship as separate artifacts so you only pull in what you use.
+[![CI](https://github.com/bangmodcloud/reagent-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/bangmodcloud/reagent-toolkit/actions)
+[![Clojars Project](https://img.shields.io/clojars/v/io.github.bangmodcloud/reagent-form.svg?color=blue)](https://clojars.org/io.github.bangmodcloud/reagent-form)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![ClojureScript](https://img.shields.io/badge/ClojureScript-1.11+-purple.svg)](https://clojurescript.org)
 
-Each one was extracted from a real production ClojureScript/shadow-cljs monorepo, where they
-lived as `bangmod.router`, `bangmod.form` and `bangmod.http-api` — internal modules used by
-several features of the same app rather than libraries designed up front. That's still their
-shape: a router that lets each app feature register its own routes independently, a form
-library built around handing back ready-to-spread input props, and an HTTP client whose one
-deliberate design choice is that a GET and a live SSE subscription can share one URI. None of
-the three try to be a framework — each does one thing a Reagent/re-frame app needs repeatedly,
-and gets out of the way otherwise.
+Three lightweight, modular ClojureScript libraries for [Reagent](https://reagent-project.github.io/) and [re-frame](https://day8.github.io/re-frame/) applications. 
 
-| Artifact                                  | Namespaces           | What it does                                                 | Depends on                                   | Docs                       |
-| ----------------------------------------- | -------------------- | ------------------------------------------------------------ | --------------------------------------------- | -------------------------- |
-| `io.github.bangmodcloud/reagent-form`     | `bangmod.form.*`     | Form state, validation, field arrays and field groups        | reagent, core.async                          | [docs/form.md](docs/form.md)         |
-| `io.github.bangmodcloud/reagent-http-api` | `bangmod.http-api.*` | Declarative HTTP + SSE API client, with re-frame integration | reagent, re-frame, cljs-ajax, core.async     | [docs/http-api.md](docs/http-api.md) |
-| `io.github.bangmodcloud/reagent-router`   | `bangmod.router.*`   | bidi + pushy routing for single-page apps                    | reagent, re-frame, bidi, pushy, cemerick/url | [docs/router.md](docs/router.md)     |
+Extracted directly from production monorepos, these libraries solve the three most common front-end concerns without forcing you into an all-in-one framework:
 
-The three modules do not depend on each other — take `reagent-router` without dragging in
-form handling or an HTTP stack. Each doc above covers that module on its own: a quick start
-you can copy in and run, the full API, a real-world example drawn from actual production
-code, and the gotchas worth knowing before you rely on it.
+* 📝 **`reagent-form`** — Form state, automatic input prop spreading, validation, and field arrays.
+* 🌐 **`reagent-http-api`** — Declarative REST & SSE client where a `GET` query and a live Server-Sent Events stream can share the exact same URI.
+* 🧭 **`reagent-router`** — Feature-first routing (bidi + pushy) where each feature module registers its own routes independently.
+
+> **Zero Bloat & Zero Cross-Dependencies:** Take `reagent-router` without pulling in an HTTP client or form handler. Each artifact is completely standalone.
+
+---
+
+## The Modules at a Glance
+
+| Artifact | Namespace | Solves | Deep Dive |
+| :--- | :--- | :--- | :--- |
+| **`io.github.bangmodcloud/reagent-form`** | `bangmod.form.*` | Eliminates form state boilerplate. Produces ready-to-spread props for `[:input ...]` and handles sync/async validation. | [📖 Form Docs](docs/form.md) |
+| **`io.github.bangmodcloud/reagent-http-api`** | `bangmod.http-api.*` | Declarative endpoints with automatic Bearer token injection, single-flight token refresh, and dual GET/SSE streaming on one URI. | [📖 HTTP/SSE Docs](docs/http-api.md) |
+| **`io.github.bangmodcloud/reagent-router`** | `bangmod.router.*` | Decentralized routing. Feature modules own their routes. Reactive URL params and built-in route health checking (`registration-report`). | [📖 Router Docs](docs/router.md) |
+
+---
+
+## 30-Second Tour
+
+### 1. Forms without event-wiring boilerplate
+Spread `register-field` directly onto inputs. Validation and touched state are handled automatically:
+
+```clojure
+(let [login-form (form/create-form :login)
+      {:keys [register-field handle-submit get-field-display-error]} (form/make-api login-form)]
+  [:form {:on-submit (handle-submit on-submit-fn)}
+   [:input (register-field :email {:type "email" :validators [v/required]})]
+   (when-let [err (get-field-display-error :email)]
+     [:span.error err])
+   [:button {:type "submit"} "Log in"]])
+```
+
+### 2. HTTP & Real-time SSE on the same URI
+Fetch an initial snapshot with `execute`, then seamlessly stream live updates with `subscribe` using the exact same backend endpoint:
+
+```clojure
+(defapi :account {:base-url "https://api.example.com"}
+  {:get     {:method :get :uri "/api/account/me" :response-format :json}
+   :changes {:method :sse :uri "/api/account/me"}})
+
+;; 1. One-off request
+(http-api/execute :account :get)
+
+;; 2. Live stream (auto-reconnects, auto-injected auth token)
+(http-api/subscribe :account :changes
+  {:on-message (fn [data] (rf/dispatch [:account/update data]))})
+```
+
+### 3. Decentralized, Feature-First Routing
+Features declare their own routes; the router aggregates them and provides a reactive panel to render the active page:
+
+```clojure
+;; In your feature module:
+(router/register-routes ["" {"/dashboard" [:dashboard dashboard-view]}])
+
+;; In your root view:
+[:div.app-shell
+ [router-views/matched-route-panel]]
+```
+
+---
 
 ## Installation
 
-### From Clojars
+### From Clojars (`deps.edn`)
+
+Choose only the modules your app needs:
 
 ```clojure
-;; deps.edn
 {:deps {io.github.bangmodcloud/reagent-form     {:mvn/version "0.1.0"}
         io.github.bangmodcloud/reagent-http-api {:mvn/version "0.1.0"}
         io.github.bangmodcloud/reagent-router   {:mvn/version "0.1.0"}}}
 ```
 
-### As a git dependency
+### As a Git Dependency
 
-`:deps/root` points tools.deps at a subdirectory. Note the **explicit `:git/url`**: without
-it, tools.deps would infer `github.com/bangmodcloud/reagent-router` from the library name,
-which is not where this code lives — and the explicit url is also what lets two modules from
-the same repo coexist in one dependency map.
+If you want to track `main` or pin to a specific git commit, use an explicit `:git/url` and `:deps/root`:
 
 ```clojure
 {:deps {io.github.bangmodcloud/reagent-router
         {:git/url   "https://github.com/bangmodcloud/reagent-toolkit.git"
          :git/tag   "v0.1.0"
-         :git/sha   "<sha>"          ; first 7 chars of the tagged commit
+         :git/sha   "..." 
          :deps/root "modules/reagent-router"}}}
 ```
 
-## Repo layout
+---
+
+## Design Principles
+
+1. **Unified Versioning:** All modules share the exact same version number (e.g. `v0.1.0`). There is no compatibility matrix to remember—if they have the same version, they work together.
+2. **Decoupled by Default:** Modules do not depend on each other. If you only want a router, you never pull in `cljs-ajax` or form code.
+3. **Production Hardened:** Designed around real frontend challenges—silent error suppression while submitting, single-flight token renewal on 401s, and compile-time route audits to avoid 404 white-screens.
+
+---
+
+## Repository Layout
 
 ```
 reagent-toolkit/
-├── deps.edn                        # root: modules wired via :local/root, plus dev/test/build aliases
-├── build.clj                       # tools.build — jar / install / deploy, one module or all
-├── shadow-cljs.edn                 # :node-test build
-├── docs/                           # per-module docs — quick start, API reference, gotchas
-│   ├── form.md
-│   ├── http-api.md
-│   └── router.md
+├── deps.edn                        # Root workspace wiring modules via :local/root
+├── build.clj                       # tools.build — jar, install, deploy
+├── shadow-cljs.edn                 # Test build runner (:node-test)
+├── docs/                           # In-depth per-module guides
+│   ├── form.md                     # Form validation, API reference, field arrays
+│   ├── http-api.md                 # REST, SSE streaming, token refresh
+│   └── router.md                   # Routing, bidi syntax, route auditing
 ├── modules/
-│   ├── reagent-form/
-│   │   ├── deps.edn                # this module's own dependencies
-│   │   └── src/bangmod/form/
-│   ├── reagent-http-api/
-│   │   ├── deps.edn
-│   │   └── src/bangmod/http_api/
-│   └── reagent-router/
-│       ├── deps.edn
-│       └── src/bangmod/router/
-└── test/                           # tests for all modules (root classpath sees all three)
+│   ├── reagent-form/               # Form state & validation
+│   ├── reagent-http-api/           # REST + SSE HTTP client
+│   └── reagent-router/             # Pushy + Bidi SPA router
+└── test/                           # Test suite across all modules
 ```
 
-The directory name under `modules/` is the artifact name; the namespaces inside stay
-`bangmod.form` / `bangmod.http-api` / `bangmod.router`.
-
-Each `modules/*/deps.edn` declares only that module's dependencies — that file *is* the
-published artifact's dependency list, so keeping it tight is what keeps consumers' builds
-lean. The root `deps.edn` wires all three in with `:local/root`, so a REPL or test run
-sees your edits with no install step in between.
+---
 
 ## Development
 
 ```bash
-# REPL with all three modules + ClojureScript on the classpath
+# Start a REPL with all modules on the classpath
 clj -M:dev
 
-# run the tests
+# Run automated tests via shadow-cljs and Node.js
 clj -M:test -m shadow.cljs.devtools.cli compile test && node target/node-tests.js
 ```
 
-The test build is `:node-test`, so it can only load namespaces that are free of browser
-globals — `cljs-ajax` touches `js/XMLHttpRequest` and `pushy` touches `js/window` at load
-time. That is why the decision logic of `reagent-http-api` lives in `retry.cljc` and
-`sse.cljc`, apart from the transport in `internal.cljs`: the policy stays unit-testable.
-Code that genuinely needs a DOM wants a `:browser-test` build instead.
+---
 
-## Versioning
+## Building and Releasing
 
-All three modules share one version number. Releasing `v0.2.0` publishes `reagent-form`,
-`reagent-http-api` and `reagent-router` as `0.2.0` together, even if only one of them
-changed. There is no compatibility matrix to keep in your head — same number, works together.
-
-## Building and releasing
+Build artifacts locally:
 
 ```bash
+# Clean previous builds
 clj -T:build clean
-clj -T:build jar-all                                 # target/*.jar
-clj -T:build install-all                             # into ~/.m2, for testing against a real app
-clj -T:build jar :module '"reagent-router"'          # just one module
 
-clj -T:build deploy-all :version '"0.1.0"'           # to Clojars
+# Build jars for all modules into target/
+clj -T:build jar-all
+
+# Install into local ~/.m2 (great for testing with your actual app)
+clj -T:build install-all
+
+# Deploy all modules to Clojars
+clj -T:build deploy-all :version '"0.1.0"'
 ```
 
-`deploy` reads `CLOJARS_USERNAME` and `CLOJARS_PASSWORD` (a
-[deploy token](https://github.com/clojars/clojars-web/wiki/Deploy-Tokens), not your
-password) from the environment. The version defaults to `0.1.0-SNAPSHOT`, is overridden by
-the `RELEASE_VERSION` env var, and an explicit `:version` argument wins over both.
+Deployment credentials are read from `CLOJARS_USERNAME` and `CLOJARS_PASSWORD` (Deploy Token).
 
-To cut a release: bump the changelog, tag `vX.Y.Z`, and push the tag — the release
-workflow builds and deploys all three modules.
-
-> **Before the first deploy:** the `io.github.bangmodcloud` group has to be verified on
-> Clojars by proving ownership of the `bangmodcloud` GitHub account — the same org this
-> repo lives under. See
-> [Verified group names](https://github.com/clojars/clojars-web/wiki/Verified-Group-Names).
+---
 
 ## License
 
-MIT © 2026 bangmodcloud. See [LICENSE](LICENSE).
+Distributed under the MIT License. See [LICENSE](LICENSE) for details.

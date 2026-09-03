@@ -4,11 +4,11 @@ Three small, independent ClojureScript libraries for [Reagent](https://reagent-p
 / [re-frame](https://day8.github.io/re-frame/) front-ends. They live in one repo and
 release together, but ship as separate artifacts so you only pull in what you use.
 
-| Artifact                             | Namespaces             | What it does                                                 | Depends on                                   |
-| ------------------------------------ | ---------------------- | ------------------------------------------------------------ | -------------------------------------------- |
-| `io.github.bangmod/reagent-form`     | `bangmod.form.*`       | Form state, validation, field arrays and field groups         | reagent, core.async                          |
-| `io.github.bangmod/reagent-http-api` | `bangmod.http-api.*`   | Declarative HTTP + SSE API client, with re-frame integration  | reagent, re-frame, cljs-ajax, core.async     |
-| `io.github.bangmod/reagent-router`   | `bangmod.router.*`     | bidi + pushy routing for single-page apps                     | reagent, re-frame, bidi, pushy, cemerick/url |
+| Artifact                                  | Namespaces           | What it does                                                 | Depends on                                   |
+| ----------------------------------------- | -------------------- | ------------------------------------------------------------ | -------------------------------------------- |
+| `io.github.bangmodcloud/reagent-form`     | `bangmod.form.*`     | Form state, validation, field arrays and field groups        | reagent, core.async                          |
+| `io.github.bangmodcloud/reagent-http-api` | `bangmod.http-api.*` | Declarative HTTP + SSE API client, with re-frame integration | reagent, re-frame, cljs-ajax, core.async     |
+| `io.github.bangmodcloud/reagent-router`   | `bangmod.router.*`   | bidi + pushy routing for single-page apps                    | reagent, re-frame, bidi, pushy, cemerick/url |
 
 The three modules do not depend on each other — take `reagent-router` without dragging in
 form handling or an HTTP stack.
@@ -19,20 +19,20 @@ form handling or an HTTP stack.
 
 ```clojure
 ;; deps.edn
-{:deps {io.github.bangmod/reagent-form     {:mvn/version "0.1.0"}
-        io.github.bangmod/reagent-http-api {:mvn/version "0.1.0"}
-        io.github.bangmod/reagent-router   {:mvn/version "0.1.0"}}}
+{:deps {io.github.bangmodcloud/reagent-form     {:mvn/version "0.1.0"}
+        io.github.bangmodcloud/reagent-http-api {:mvn/version "0.1.0"}
+        io.github.bangmodcloud/reagent-router   {:mvn/version "0.1.0"}}}
 ```
 
 ### As a git dependency
 
 `:deps/root` points tools.deps at a subdirectory. Note the **explicit `:git/url`**: without
-it, tools.deps would infer `github.com/bangmod/reagent-router` from the library name, which
-is not where this code lives — and the explicit url is also what lets two modules from the
-same repo coexist in one dependency map.
+it, tools.deps would infer `github.com/bangmodcloud/reagent-router` from the library name,
+which is not where this code lives — and the explicit url is also what lets two modules from
+the same repo coexist in one dependency map.
 
 ```clojure
-{:deps {io.github.bangmod/reagent-router
+{:deps {io.github.bangmodcloud/reagent-router
         {:git/url   "https://github.com/bangmodcloud/reagent-toolkit.git"
          :git/tag   "v0.1.0"
          :git/sha   "<sha>"          ; first 7 chars of the tagged commit
@@ -108,12 +108,11 @@ the `RELEASE_VERSION` env var, and an explicit `:version` argument wins over bot
 To cut a release: bump the changelog, tag `vX.Y.Z`, and push the tag — the release
 workflow builds and deploys all three modules.
 
-> **Before the first deploy:** an `io.github.*` group is verified on Clojars by proving
-> ownership of the GitHub account of the same name — so `io.github.bangmod` needs the
-> `bangmod` account, even though this repo lives under `bangmodcloud`. If only
-> `bangmodcloud` is available, change `group` in `build.clj` to `io.github.bangmodcloud`.
-> See [Verified group names](https://github.com/clojars/clojars-web/wiki/Verified-Group-Names).
+> **Before the first deploy:** the `io.github.bangmodcloud` group has to be verified on
+> Clojars by proving ownership of the `bangmodcloud` GitHub account — the same org this
+> repo lives under. See
+> [Verified group names](https://github.com/clojars/clojars-web/wiki/Verified-Group-Names).
 
 ## License
 
-MIT © 2026 bangmod. See [LICENSE](LICENSE).
+MIT © 2026 bangmodcloud. See [LICENSE](LICENSE).

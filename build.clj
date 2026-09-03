@@ -12,7 +12,7 @@
   (:require [clojure.tools.build.api :as b]
             [deps-deploy.deps-deploy :as dd]))
 
-(def ^:private group "io.github.bangmod")
+(def ^:private group "io.github.bangmodcloud")
 (def ^:private repo-url "https://github.com/bangmodcloud/reagent-toolkit")
 
 (def ^:private default-version

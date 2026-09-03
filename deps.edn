@@ -2,9 +2,9 @@
 
  ;; The three modules, wired locally. Editing `modules/reagent-form/src` shows up
  ;; immediately in the root REPL / test build — no install step in between.
- :deps {io.github.bangmod/reagent-form     {:local/root "modules/reagent-form"}
-        io.github.bangmod/reagent-http-api {:local/root "modules/reagent-http-api"}
-        io.github.bangmod/reagent-router   {:local/root "modules/reagent-router"}}
+ :deps {io.github.bangmodcloud/reagent-form     {:local/root "modules/reagent-form"}
+        io.github.bangmodcloud/reagent-http-api {:local/root "modules/reagent-http-api"}
+        io.github.bangmodcloud/reagent-router   {:local/root "modules/reagent-router"}}
 
  :aliases
  {;; clj -M:dev  — REPL with ClojureScript on the classpath

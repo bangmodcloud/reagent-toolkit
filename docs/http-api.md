@@ -1,200 +1,186 @@
 # reagent-http-api
 
-[![Clojars Project](https://img.shields.io/clojars/v/io.github.bangmodcloud/reagent-http-api.svg?color=blue)](https://clojars.org/io.github.bangmodcloud/reagent-http-api)
+`io.github.bangmodcloud/reagent-http-api` — namespace `bangmod.http-api.*`
 
-A declarative, full-lifecycle HTTP and Server-Sent Events (SSE) client for ClojureScript, designed for [Reagent](https://reagent-project.github.io/) and [re-frame](https://day8.github.io/re-frame/).
+A declarative wrapper around [cljs-ajax](https://github.com/JulianBirch/cljs-ajax) for REST
+calls, plus a live-update path (`:method :sse`) and optional re-frame integration. Describe
+each API once as a map of endpoints; `execute`/`subscribe` handle the request/stream, bearer
+token injection, and (for SSE) reconnects.
 
----
+## Install
 
-## Why reagent-http-api?
+See the [root README](../README.md#installation) for `deps.edn` / git-dependency snippets.
 
-Front-end applications often struggle with scattered endpoint URLs, repetitive Bearer token injection, messy token expiration flows, and fragmented codebases where REST and real-time streaming use completely different abstractions.
-
-`reagent-http-api` brings order to your data layer:
-
-* 📋 **Declarative Endpoints:** Define your APIs once with `defapi`. Base URLs, formats, timeouts, and URL param bindings are configured centrally.
-* ⚡ **Unified REST & SSE:** Query a snapshot with a standard `GET`, and subscribe to live changes with `SSE`—**using the exact same URI**.
-* 🔐 **Automatic Auth & Single-Flight Refresh:** Automatically injects Bearer tokens. When a token expires, all concurrent requests park safely while a single refresh runs.
-* 🔄 **Reagent & re-frame Native:** Consume data reactively via Reagent reactions (`get-data-reaction`) or sync responses directly into re-frame's `app-db`.
-
----
-
-## Installation
-
-Add to your `deps.edn`:
+## Quick start
 
 ```clojure
-io.github.bangmodcloud/reagent-http-api {:mvn/version "0.1.0"}
-```
-
----
-
-## Quick Start
-
-### 1. Declare your API endpoints
-
-```clojure
-(ns myapp.api.user
+(ns myapp.api.account
   (:require [bangmod.http-api.core :refer [defapi]]))
 
-(defapi :user
+(defapi :account
   {:base-url "https://api.example.com"}
-  {:me      {:method :get
-             :uri "/api/v1/users/me"
-             :response-format :json}
-   :update  {:method :patch
-             :uri "/api/v1/users/:id"
-             :request-format :json
-             :response-format :json}
-   :stream  {:method :sse
-             :uri "/api/v1/users/me"}})
+  {:get {:method :get :uri "/api/query/account-projection/me" :response-format :json}})
 ```
 
-### 2. Make REST Calls (`execute`)
-
-`execute` returns a `core.async` channel that delivers a result map: `{:success? bool :data ...}`.
-
 ```clojure
-(ns myapp.events
+(ns myapp.feature.account.event
   (:require [cljs.core.async :as a]
             [re-frame.core :as rf]
             [bangmod.http-api.core :as http-api]))
 
-(defn fetch-me! []
+(defn load-account! []
   (a/go
-    (let [{:keys [success? data]} (a/<! (http-api/execute :user :me))]
-      (if success?
-        (rf/dispatch [:user/set data])
-        (rf/dispatch [:user/set-error (:status data)])))))
-
-(defn update-profile! [user-id new-name]
-  (a/go
-    (let [res (a/<! (http-api/execute :user :update
-                                      {:path-params {:id user-id}
-                                       :params {:name new-name}}))]
-      (when (:success? res)
-        (println "Profile updated!")))))
+    (let [res (a/<! (http-api/execute :account :get))]
+      (if (:success? res)
+        (rf/dispatch [:account/set (:data res)])
+        (rf/dispatch [:account/set-error (:data res)])))))
 ```
 
-### 3. Subscribe to Real-Time Updates (`subscribe`)
+`execute` returns a `core.async` channel delivering exactly one map:
+`{:success? true :data <parsed response body>}` on success, or
+`{:success? false :data <cljs-ajax error map>}` on failure (that shape — `:status`,
+`:response`, ... — is [cljs-ajax's](https://github.com/JulianBirch/cljs-ajax), not this
+library's).
 
-For live SSE streaming, use `subscribe`. It automatically handles parsing and connection drops:
+Attach a bearer token to every request automatically, once at boot:
 
 ```clojure
-(def stream-handle
-  (http-api/subscribe :user :stream
-    {:on-message (fn [payload]
-                   (rf/dispatch [:user/set payload]))
-     :on-error   (fn [err]
-                   (js/console.error "SSE Error:" err))}))
-
-;; When tearing down:
-(http-api/unsubscribe! stream-handle)
+(http-api/set-auth-token-provider! (fn [] @auth/access-token))
 ```
 
----
+## GET and SSE on the same URI
 
-## Killer Feature: The GET / SSE Dual-Mode URI
-
-In modern apps, a common requirement is:
-1. Fetch the initial data state immediately on page load (`GET`).
-2. Keep that data up to date via live stream (`SSE`).
-
-Usually, backends expose this over the same route (e.g. `Accept: application/json` vs `Accept: text/event-stream`). `reagent-http-api` makes this seamless by letting both access patterns point to the same URI:
+`:sse` can point at the same `:uri` as a `:get` — that's the intended way to add a live-update
+path to an existing endpoint without a parallel one:
 
 ```clojure
-(defapi :notifications
-  {:base-url "https://api.example.com"}
-  {:get     {:method :get :uri "/api/notifications" :response-format :json}
-   :changes {:method :sse :uri "/api/notifications"}})
+{:get     {:method :get :uri "/api/query/account-projection/me" :response-format :json}
+ :changes {:method :sse :uri "/api/query/account-projection/me"}}
 ```
 
-Because `defapi` keys by *endpoint name* rather than URI, your app can cleanly fetch on demand with `(execute :notifications :get)` and stream with `(subscribe :notifications :changes)` without duplicating route logic.
+`:get` returns the current value once, on demand; `:changes` opens a stream at the identical
+URI and delivers that same shape again on every change. Two entries exist because `defapi`
+keys both the request cycle and the reaction by *endpoint name*, not by URI — one URI, two
+access patterns, not two endpoints to keep in sync. The server side only needs the same route
+to also serve `Accept: text/event-stream`; nothing about `:get` has to change.
 
----
+## API reference
 
-## Authentication & Token Refresh
+`bangmod.http-api.core`:
 
-### Automatic Bearer Token Injection
-Configure a token provider once at application startup. Every request automatically receives `Authorization: Bearer <token>`:
+| Function | Description |
+| --- | --- |
+| `(defapi api-name options endpoints-spec)` | Declares one named REST/SSE API. `options` is `{:base-url "..."}`. `endpoints-spec` is `endpoint-name -> spec` — see below. |
+| `(execute api-name endpoint-name opts?)` | Fires one request, returns a channel with `{:success? bool :data ...}`. `opts`: `:path-params` (fills `:param` in the URI), `:params` (query/body), `:headers` (overrides the auto-injected token for that call). |
+| `(subscribe api-name endpoint-name opts)` | Opens a live subscription against an `:sse` endpoint, returns an opaque handle. `opts`: `:path-params`, `:params`, `:on-open` (0-arg, every reconnect including the first — see Gotchas), `:on-message` (1-arg, parsed frame data), `:on-error` (1-arg, message string). |
+| `(unsubscribe! handle)` | Closes the connection, cancels any pending reconnect. Safe on an already-closed handle. |
+| `(set-auth-token-provider! f)` | Registers a 0-arg fn returning the bearer token (or `nil`), injected into every request lacking an explicit `:authorization` header, rebuilt fresh on every retry. |
+| `(set-token-stale-handler! f)` | Registers a 0-arg fn returning a channel, called when a 401 carries `{:reason "token-stale"}`. Retried exactly once after the handler's channel closes; concurrent stale requests share one reload. No handler registered ⇒ the 401 passes through unchanged. |
+| `(init)` | Wires re-frame integration: every response/SSE update mirrors into `[:_http-api :data]` in the app-db. Optional — `execute`/`subscribe`/`get-data-reaction` work without it. |
+| `(get-data-reaction api-name endpoint-name)` | Reagent reaction over an endpoint's latest value: `@(http-api/get-data-reaction :account :get)`. |
+
+`endpoints-spec` per-endpoint keys:
+
+- `:method` — `:get`, `:post`, `:put`, `:patch`, `:delete`, or `:sse` (opened with
+  `subscribe`, never `execute`; `:request-format`/`:response-format`/`:timeout` don't apply).
+- `:uri` — path, may contain `:param` placeholders (`"/api/leaves/:id"`).
+- `:request-format` — `:json`, `:url`, `:transit`, `:raw`.
+- `:response-format` — `:json`, `:text`, `:transit`, `:raw`.
+- `:timeout` — ms, default `10000`.
+
+## Real-world example
+
+Declaring an API mixing GET, POST and SSE:
 
 ```clojure
-(http-api/set-auth-token-provider! (fn [] @auth-token-atom))
+(ns myapp.api.account
+  "Owner-facing account calls. Reads hit `/api/query/{projection}`, writes hit
+   `/api/commands/{aggregate}/{command}` with the target id in the body."
+  (:require [bangmod.http-api.core :refer [defapi]]
+            [myapp.config :as config]))
+
+(defn init []
+  (defapi :account
+    {:base-url config/API_BASE_URL}
+    {:get        {:method :get  :uri "/api/query/account-projection/me"
+                  :response-format :json}
+     :ledger     {:method :get  :uri "/api/query/account-projection/me/ledger"
+                  :response-format :json}
+     :changes    {:method :sse  :uri "/api/query/account-projection/me"} ; same URI as :get
+     :auto-renew {:method :post :uri "/api/commands/account/auto-renew"
+                  :request-format :json :response-format :json}}))
 ```
 
-### Automatic 401 Refresh (Single-Flight)
-When an API responds with `401 Unauthorized` carrying `{:reason "token-stale"}`, `reagent-http-api` pauses requests and invokes your refresh handler:
+`execute`, in a go block, success/failure handled explicitly:
 
 ```clojure
-(http-api/set-token-stale-handler!
-  (fn []
-    ;; Return a core.async channel that closes when the refresh finishes
-    (auth/refresh-access-token!)))
+(ns myapp.feature.account.event
+  (:require [cljs.core.async :as a]
+            [re-frame.core :as rf]
+            [bangmod.http-api.core :as http-api]
+            [myapp.api.response :as response]))
+
+(defn load-account!
+  ([] (load-account! nil))
+  ([on-done]
+   (a/go
+     (let [res (a/<! (http-api/execute :account :get))]
+       (if (:success? res)
+         (let [account (response/payload res)]
+           (rf/dispatch [:account/set account])
+           (when on-done (on-done account)))
+         (do (rf/dispatch [:account/set-error (response/error-message res)])
+             (when on-done (on-done nil))))))))
 ```
 
-> [!TIP]
-> **Single-Flight Concurrency:** If 5 requests fail with stale tokens at the same time, only **one** refresh operation is triggered. All 5 requests wait for that single refresh to finish, and are then automatically retried with the new token.
+`response/payload`/`response/error-message` are small app-side helpers around `:data` (not
+part of this library) — `payload` is `(:data res)` on success, `error-message` picks a
+message out of the cljs-ajax error map on failure.
 
----
-
-## Reagent & re-frame Integration
-
-### Direct Reagent Reaction
-If you want reactive UI without re-frame:
+`subscribe`/`unsubscribe!` in a component's lifecycle — the pattern that matters most for SSE:
 
 ```clojure
-(defn user-profile []
-  (let [user-data @(http-api/get-data-reaction :user :me)]
-    [:div "Hello, " (:name user-data)]))
+(ns myapp.feature.account.view
+  (:require [reagent.core :as r]
+            [re-frame.core :as rf]
+            [bangmod.http-api.core :as http-api]
+            [myapp.feature.account.event :refer [load-account! load-ledger!]]))
+
+(defn account-page []
+  (let [changes-sub (r/atom nil)]
+    (r/create-class
+     {:component-did-mount
+      (fn [_]
+        (load-account!)
+        (load-plans!)                    ; a sibling load, same pattern as load-account!
+        (reset! changes-sub
+                (http-api/subscribe :account :changes
+                                     {:on-open (fn [] (load-ledger!))
+                                      :on-message (fn [acct]
+                                                    (rf/dispatch [:account/set acct])
+                                                    (load-ledger!))})))
+      :component-will-unmount
+      (fn []
+        (http-api/unsubscribe! @changes-sub)
+        (reset! changes-sub nil))
+      :reagent-render
+      (fn []
+        (let [acct @(rf/subscribe [:account/data])]
+          [:div "..."]))})))
 ```
 
-### re-frame Sync
-Call `(http-api/init)` once at boot. Every successful response and SSE update will be mirrored into your re-frame `app-db` under `[:_http-api :data]`.
+## Gotchas
 
----
-
-## API Reference
-
-### Configuration & Declarations
-
-| Function | Signature | Description |
-| :--- | :--- | :--- |
-| `defapi` | `[api-name options endpoints]` | Declares a named REST/SSE API. |
-| `set-auth-token-provider!` | `[f]` | Registers a 0-arg function returning current token string. |
-| `set-token-stale-handler!` | `[f]` | Registers a 0-arg function returning a channel for token refresh. |
-| `init` | `[]` | Connects HTTP/SSE state automatically into re-frame `app-db`. |
-
-#### `defapi` Endpoint Options
-* `:method` — `:get`, `:post`, `:put`, `:patch`, `:delete`, or `:sse`.
-* `:uri` — Relative endpoint path. Supports `:id` style path params.
-* `:request-format` — `:json`, `:transit`, `:url`, or `:raw`.
-* `:response-format` — `:json`, `:transit`, `:text`, or `:raw`.
-* `:timeout` — Request timeout in milliseconds (default: `10000`).
-
-### Operations
-
-| Function | Signature | Description |
-| :--- | :--- | :--- |
-| `execute` | `[api-id endpoint-id opts?]` | Makes a REST request. Returns `core.async` channel with `{:success? bool :data ...}`. |
-| `subscribe` | `[api-id endpoint-id opts]` | Opens an SSE connection. Returns an opaque handle. |
-| `unsubscribe!` | `[handle]` | Closes the SSE connection and cancels pending reconnects. |
-| `get-data-reaction` | `[api-id endpoint-id]` | Returns a Reagent reaction of the latest response/event data. |
-
----
-
-## Gotchas & Best Practices
-
-> [!IMPORTANT]
-> **Always Unsubscribe on Unmount**
-> When using `subscribe` in a component, save the handle and call `unsubscribe!` in `component-will-unmount` to prevent memory leaks and dangling reconnect timers:
-> ```clojure
-> :component-will-unmount (fn [] (http-api/unsubscribe! @sub-handle))
-> ```
-
-> [!NOTE]
-> **Reconnection Semantics (`:on-open`)**
-> The `:on-open` callback fires on **every** connection (including reconnects after network dropouts). Use `:on-open` to trigger a re-fetch of any snapshot data to guarantee UI consistency.
-
-> [!CAUTION]
-> **Endpoint Type Guard**
-> Calling `execute` on an endpoint defined with `:method :sse` (or `subscribe` on a non-SSE endpoint) will throw an explicit error immediately.
+- **`:on-open` fires on every reconnect, not just the first — treat it as "do a full
+  re-fetch now."** The server subscribes before writing its first byte, so there's no gap
+  between the `execute` snapshot and the stream. Loading dependent data (`load-ledger!`
+  above) from `:on-open` rather than once on mount is what keeps it correct across a
+  reconnect.
+- **Always pair `subscribe` with `unsubscribe!` in `component-will-unmount`** — a subscription
+  that outlives its component leaks a connection and a pending reconnect timer.
+- **A stale token retries at most once**, and concurrent stale requests share that one
+  reload. With no `set-token-stale-handler!` registered, the 401 just reaches your callback
+  like any other failure.
+- **`execute` on an `:sse` endpoint (and `subscribe` on anything else) throws immediately**,
+  naming the mismatch, rather than failing somewhere inside the transport.
+- **`:headers` on a call overrides the auto-injected `:authorization`**, not merges under it.

@@ -52,6 +52,16 @@ See the [root README](../README.md#installation) for `deps.edn` / git-dependency
 
 ## API reference
 
+There are two ways to call this API on a form. `(form/make-api form)` returns a map of the
+12 functions listed below, already bound to `form` — destructure it once and spread the
+result through your component, as in the quick start. Or skip `make-api` and call the
+protocol functions in `bangmod.form.api` directly, passing `form` as the first argument
+yourself: `(api/register-field form field-name field-config)`. Both operate on the same
+`ReagentForm` instance, so mixing them on one form is fine — `make-api` is just a
+convenience layer over `bangmod.form.api`'s `IForm` protocol, not a different API. Reach for
+the direct form when you need one of the few `IForm` functions `make-api` doesn't expose —
+see below.
+
 `bangmod.form.core`:
 
 | Function / component | Description |
@@ -85,6 +95,33 @@ Bound functions returned by `make-api`:
 - `:id` — defaults to `field-name`. `:type` — defaults to `"text"`. `:placeholder` — defaults
   to `"Enter"`.
 - `:on-change` / `:on-blur` / `:on-focus` — override the generated handler.
+
+### Calling `bangmod.form.api` directly
+
+`bangmod.form.api` defines the full `IForm` protocol `make-api` wraps — every function
+above, plus a few `make-api` leaves out because they're rarely what a component needs:
+
+| Function | Description |
+| --- | --- |
+| `(api/get-form-values form)` | A plain map of every field's current raw value — the same shape `handle-submit` passes to `on-submit-fn`, available any time, not just at submit. |
+| `(api/validate-all-fields form)` | Touches and validates every field, returns the first error found (or `nil`). Runs the same check `handle-submit` runs, without submitting — useful for a "can I move to the next wizard step" check. |
+| `(api/get-initial-values form)` | The form's `:initial-values`, as given to `create-form`. |
+
+Same call shape either way — `form` first, then whatever the function normally takes:
+
+```clojure
+(require '[bangmod.form.api :as api])
+
+(api/register-field login-form :email {:validators [v/required]})
+(api/get-form-values login-form)
+;; => {:email "a@b.com" :password "secret"}
+```
+
+This isn't a theoretical escape hatch — `FieldArray` and `FieldGroup` (below) are themselves
+built this way: they hold a `form` value with no component of their own bound to it via
+`make-api`, and call `api/register-field`, `api/change-field-value`, `api/get-form-values`
+and `api/validate-all-fields` on it directly, because a nested/repeated form's own validator
+needs `validate-all-fields`, which `make-api` doesn't expose.
 
 ### Writing a validator
 

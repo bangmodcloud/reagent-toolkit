@@ -4,14 +4,25 @@ Three small, independent ClojureScript libraries for [Reagent](https://reagent-p
 / [re-frame](https://day8.github.io/re-frame/) front-ends. They live in one repo and
 release together, but ship as separate artifacts so you only pull in what you use.
 
-| Artifact                                  | Namespaces           | What it does                                                 | Depends on                                   |
-| ----------------------------------------- | -------------------- | ------------------------------------------------------------ | -------------------------------------------- |
-| `io.github.bangmodcloud/reagent-form`     | `bangmod.form.*`     | Form state, validation, field arrays and field groups        | reagent, core.async                          |
-| `io.github.bangmodcloud/reagent-http-api` | `bangmod.http-api.*` | Declarative HTTP + SSE API client, with re-frame integration | reagent, re-frame, cljs-ajax, core.async     |
-| `io.github.bangmodcloud/reagent-router`   | `bangmod.router.*`   | bidi + pushy routing for single-page apps                    | reagent, re-frame, bidi, pushy, cemerick/url |
+Each one was extracted from a real production ClojureScript/shadow-cljs monorepo, where they
+lived as `bangmod.router`, `bangmod.form` and `bangmod.http-api` — internal modules used by
+several features of the same app rather than libraries designed up front. That's still their
+shape: a router that lets each app feature register its own routes independently, a form
+library built around handing back ready-to-spread input props, and an HTTP client whose one
+deliberate design choice is that a GET and a live SSE subscription can share one URI. None of
+the three try to be a framework — each does one thing a Reagent/re-frame app needs repeatedly,
+and gets out of the way otherwise.
+
+| Artifact                                  | Namespaces           | What it does                                                 | Depends on                                   | Docs                       |
+| ----------------------------------------- | -------------------- | ------------------------------------------------------------ | --------------------------------------------- | -------------------------- |
+| `io.github.bangmodcloud/reagent-form`     | `bangmod.form.*`     | Form state, validation, field arrays and field groups        | reagent, core.async                          | [docs/form.md](docs/form.md)         |
+| `io.github.bangmodcloud/reagent-http-api` | `bangmod.http-api.*` | Declarative HTTP + SSE API client, with re-frame integration | reagent, re-frame, cljs-ajax, core.async     | [docs/http-api.md](docs/http-api.md) |
+| `io.github.bangmodcloud/reagent-router`   | `bangmod.router.*`   | bidi + pushy routing for single-page apps                    | reagent, re-frame, bidi, pushy, cemerick/url | [docs/router.md](docs/router.md)     |
 
 The three modules do not depend on each other — take `reagent-router` without dragging in
-form handling or an HTTP stack.
+form handling or an HTTP stack. Each doc above covers that module on its own: a quick start
+you can copy in and run, the full API, a real-world example drawn from actual production
+code, and the gotchas worth knowing before you rely on it.
 
 ## Installation
 
@@ -46,6 +57,10 @@ reagent-toolkit/
 ├── deps.edn                        # root: modules wired via :local/root, plus dev/test/build aliases
 ├── build.clj                       # tools.build — jar / install / deploy, one module or all
 ├── shadow-cljs.edn                 # :node-test build
+├── docs/                           # per-module docs — quick start, API reference, gotchas
+│   ├── form.md
+│   ├── http-api.md
+│   └── router.md
 ├── modules/
 │   ├── reagent-form/
 │   │   ├── deps.edn                # this module's own dependencies

@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: DeLaGuardo/setup-clojure@v13
+        with:
+          cli: latest
+
+      - name: Cache Clojure dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            .cpcache
+          key: cljdeps-${{ hashFiles('deps.edn', 'modules/*/deps.edn') }}
+          restore-keys: cljdeps-
+
+      - name: Run tests
+        run: |
+          clojure -M:test -m shadow.cljs.devtools.cli compile test
+          node target/node-tests.js
+
+      - name: Build all module jars
+        run: clojure -T:build jar-all

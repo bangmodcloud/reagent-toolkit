@@ -1,0 +1,10 @@
+;; Test build. Only namespaces free of browser globals live here — `pushy`,
+;; `cljs-ajax` and `reagent` all touch `js/window` / `js/XMLHttpRequest` at load
+;; time, which is why `retry` and `sse` were split out as `.cljc` in the first
+;; place. Anything requiring those needs a `:browser-test` build instead.
+{:deps  {:aliases [:test]}
+
+ :builds
+ {:test {:target    :node-test
+         :output-to "target/node-tests.js"
+         :ns-regexp "-test$"}}}

@@ -1,0 +1,14 @@
+target/
+.cpcache/
+.shadow-cljs/
+node_modules/
+pom.xml
+pom.xml.asc
+*.jar
+.nrepl-port
+.calva/
+.lsp/
+.clj-kondo/.cache/
+.idea/
+*.iml
+.DS_Store

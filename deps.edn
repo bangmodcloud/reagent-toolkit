@@ -1,0 +1,26 @@
+{:paths []
+
+ ;; The three modules, wired locally. Editing `modules/reagent-form/src` shows up
+ ;; immediately in the root REPL / test build — no install step in between.
+ :deps {io.github.bangmod/reagent-form     {:local/root "modules/reagent-form"}
+        io.github.bangmod/reagent-http-api {:local/root "modules/reagent-http-api"}
+        io.github.bangmod/reagent-router   {:local/root "modules/reagent-router"}}
+
+ :aliases
+ {;; clj -M:dev  — REPL with ClojureScript on the classpath
+  :dev
+  {:extra-paths ["dev"]
+   :extra-deps {org.clojure/clojurescript {:mvn/version "1.11.132"}
+                thheller/shadow-cljs      {:mvn/version "2.28.20"}}}
+
+  ;; npx shadow-cljs compile test  (see shadow-cljs.edn)
+  :test
+  {:extra-paths ["test"]
+   :extra-deps {org.clojure/clojurescript {:mvn/version "1.11.132"}
+                thheller/shadow-cljs      {:mvn/version "2.28.20"}}}
+
+  ;; clj -T:build jar-all / install-all / deploy-all
+  :build
+  {:deps {io.github.clojure/tools.build {:mvn/version "0.10.5"}
+          slipset/deps-deploy           {:mvn/version "0.2.2"}}
+   :ns-default build}}}

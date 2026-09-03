@@ -1,0 +1,4 @@
+{:paths ["src"]
+
+ :deps {reagent/reagent            {:mvn/version "1.2.0"}
+        org.clojure/core.async     {:mvn/version "1.6.681"}}}

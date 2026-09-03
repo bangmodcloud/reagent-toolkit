@@ -7,7 +7,7 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cljs, docker]
     steps:
       - uses: actions/checkout@v4
 
@@ -20,7 +20,7 @@ jobs:
         with:
           node-version: '20'
 
-      - uses: DeLaGuardo/setup-clojure@v13
+      - uses: DeLaGuardo/setup-clojure@13
         with:
           cli: latest
 

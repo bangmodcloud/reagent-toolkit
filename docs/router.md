@@ -56,14 +56,19 @@ See the [root README](../README.md#installation) for `deps.edn` / git-dependency
 
 ## Route syntax
 
-Standard [bidi](https://github.com/juxt/bidi) route tables, with one change: each leaf is
-`[handler-keyword component]` instead of a bare keyword.
+[bidi](https://github.com/juxt/bidi) route tables, with two constraints:
+
+- Each leaf is `[handler-keyword component]` instead of bidi's bare keyword.
+- Route tables must be **maps** (`{pattern leaf-or-submap}`). bidi's alternative
+  vector-of-pairs table syntax (`[[pattern leaf] [pattern leaf] ...]`) is **not** supported —
+  the route compiler misparses it silently. Path-parameter patterns go in map *keys*, where
+  they work fine.
 
 ```clojure
-["" [["/" [:home home-view]]
-     [["/projects/" :id] [:project-detail project-view]]   ; :id lands in atom-params
-     ["/settings" {"/profile" [:settings-profile profile-view]
-                   "/billing" [:settings-billing billing-view]}]]]
+["" {"/" [:home home-view]
+     ["/projects/" :id] [:project-detail project-view]   ; :id lands in atom-params
+     "/settings" {"/profile" [:settings-profile profile-view]
+                  "/billing" [:settings-billing billing-view]}}]
 ```
 
 `:home` / `:project-detail` / ... is the route's identity everywhere else in this API

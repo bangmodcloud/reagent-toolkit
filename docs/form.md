@@ -85,7 +85,7 @@ Bound functions returned by `make-api`:
 | `touch field-name` | Marks touched (so its error becomes visible) and validates, without changing value. |
 | `get-all-fields-errors` | `({:field name :error err} ...)` for every field currently in error. |
 | `get-is-submitting` | `true` while a submission is in flight. |
-| `get-form-display-error` | Form-level error from `create-failed-submission-result`; suppressed while submitting. |
+| `get-form-display-error` | Returns a *reaction* over the form-level error from `create-failed-submission-result` — deref it (`@(get-form-display-error)`), unlike `get-field-display-error` which derefs for you. Suppressed (nil) while submitting. |
 | `handle-submit on-submit-fn` | Returns an `:on-submit` handler — see below. |
 
 `field-config` keys for `register-field`:

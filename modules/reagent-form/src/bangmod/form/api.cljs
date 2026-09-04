@@ -1,6 +1,4 @@
-(ns bangmod.form.api
-  (:require
-    ))
+(ns bangmod.form.api)
 
 (defprotocol IForm
   (-init-form [this])

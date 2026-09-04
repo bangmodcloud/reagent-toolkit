@@ -71,19 +71,21 @@ to also serve `Accept: text/event-stream`; nothing about `:get` has to change.
 | Function | Description |
 | --- | --- |
 | `(defapi api-name options endpoints-spec)` | Declares one named REST/SSE API. `options` is `{:base-url "..."}`. `endpoints-spec` is `endpoint-name -> spec` — see below. |
-| `(execute api-name endpoint-name opts?)` | Fires one request, returns a channel with `{:success? bool :data ...}`. `opts`: `:path-params` (fills `:param` in the URI), `:params` (query/body), `:headers` (overrides the auto-injected token for that call). |
-| `(subscribe api-name endpoint-name opts)` | Opens a live subscription against an `:sse` endpoint, returns an opaque handle. `opts`: `:path-params`, `:params`, `:on-open` (0-arg, every reconnect including the first — see Gotchas), `:on-message` (1-arg, parsed frame data), `:on-error` (1-arg, message string). |
+| `(execute api-name endpoint-name opts?)` | Fires one request, returns a channel with `{:success? bool :data ...}`. `opts`: `:path-params` (fills `:param` in the URI), `:params` (query/body), `:headers` (overrides the auto-injected token for that call). The reaction/re-frame slot keeps the last successful `:data` across failures — a failed call sets `:success? false` and puts the failure under `:error` there. |
+| `(subscribe api-name endpoint-name opts)` | Opens a live subscription against an `:sse` endpoint, returns an opaque handle. `opts`: `:path-params`, `:params`, `:on-open` (0-arg, every reconnect including the first — see Gotchas), `:on-message` (1-arg, parsed frame data), `:on-error` (1-arg, message string), `:events` (extra named SSE event types delivered to `:on-message`, default `["changed"]` — unnamed frames always arrive). |
 | `(unsubscribe! handle)` | Closes the connection, cancels any pending reconnect. Safe on an already-closed handle. |
 | `(set-auth-token-provider! f)` | Registers a 0-arg fn returning the bearer token (or `nil`), injected into every request lacking an explicit `:authorization` header, rebuilt fresh on every retry. |
 | `(set-token-stale-handler! f)` | Registers a 0-arg fn returning a channel, called when a 401 carries `{:reason "token-stale"}`. Retried exactly once after the handler's channel closes; concurrent stale requests share one reload. No handler registered ⇒ the 401 passes through unchanged. |
 | `(init)` | Wires re-frame integration: every response/SSE update mirrors into `[:_http-api :data]` in the app-db. Optional — `execute`/`subscribe`/`get-data-reaction` work without it. |
-| `(get-data-reaction api-name endpoint-name)` | Reagent reaction over an endpoint's latest value: `@(http-api/get-data-reaction :account :get)`. |
+| `(get-data-reaction api-name endpoint-name)` | Reagent reaction over an endpoint's latest value: `@(http-api/get-data-reaction :account :get)`. Throws if the endpoint was never declared. |
 
 `endpoints-spec` per-endpoint keys:
 
 - `:method` — `:get`, `:post`, `:put`, `:patch`, `:delete`, or `:sse` (opened with
   `subscribe`, never `execute`; `:request-format`/`:response-format`/`:timeout` don't apply).
-- `:uri` — path, may contain `:param` placeholders (`"/api/leaves/:id"`).
+- `:uri` — path, may contain `:param` placeholders (`"/api/leaves/:id"`); substituted
+  values are percent-encoded.
+- `:with-credentials` — `true` to send cookies on cross-origin requests.
 - `:request-format` — `:json`, `:url`, `:transit`, `:raw`.
 - `:response-format` — `:json`, `:text`, `:transit`, `:raw`.
 - `:timeout` — ms, default `10000`.

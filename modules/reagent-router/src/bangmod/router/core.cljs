@@ -1,6 +1,7 @@
 (ns bangmod.router.core
   (:require [bangmod.router.internal :as router-internal]
             [bangmod.router.db :as db]
+            [bangmod.router.table :as table]
             [reagent.ratom :as ratom]))
 
 (defn start!
@@ -19,18 +20,6 @@
   [handler]
   (router-internal/navigate! handler))
 
-(defn- table-route-keys
-  "Handler keywords reachable in a compiled bidi table.
-
-   Only map VALUES are followed: a path parameter (`[\"/projects/\" :id]`) is a
-   keyword in a map KEY, and collecting it would report a phantom route."
-  [node]
-  (cond
-    (keyword? node) [node]
-    (map? node) (mapcat table-route-keys (vals node))
-    (coll? node) (mapcat table-route-keys node)
-    :else []))
-
 (defn registration-report
   "{:routed [...] :registered [...] :duplicates [...] :orphan-routes [...] :orphan-registrations [...]}
 
@@ -39,7 +28,7 @@
    orphan is an ABSENCE — a route that renders blank, or a component nothing reaches —
    which the registration-time collision check cannot see."
   []
-  (let [routed (vec (distinct (mapcat table-route-keys @db/a-app-routes)))
+  (let [routed (vec (distinct (mapcat table/route-keys @db/a-app-routes)))
         registered @router-internal/registered-route-keys
         registered-set (set registered)
         routed-set (set routed)]

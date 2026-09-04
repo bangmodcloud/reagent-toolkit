@@ -4,12 +4,13 @@
             [bangmod.http-api.sse :as sse]
             [reagent.core :as r]
             [clojure.core.async :as a]
-            [reagent.ratom :as ratom]
-            [clojure.string :as str]))
+            [reagent.ratom :as ratom]))
 
-(def api-specs (atom {}))
-(def a-data (r/atom {}))
-(def a-reactions (r/atom {}))
+;; defonce: a hot reload must not wipe registered APIs or the data components are
+;; already subscribed to.
+(defonce api-specs (atom {}))
+(defonce a-data (r/atom {}))
+(defonce a-reactions (r/atom {}))
 
 ;; Optional provider fn returning the current bearer token (or nil). When set,
 ;; every request without an explicit :authorization header gets one injected.
@@ -20,31 +21,21 @@
   [f]
   (reset! auth-token-provider f))
 
-(defn- replace-path-params
-  "Replace :param placeholders in URI with actual values from path-params map.
-   e.g. \"/api/leaves/:id\" with {:id 123} => \"/api/leaves/123\""
-  [uri path-params]
-  (reduce-kv (fn [u k v]
-               (str/replace u (str ":" (name k)) (str v)))
-             uri
-             (or path-params {})))
-
 (defn- build-request-map
   "Build an ajax-compatible request map from an endpoint spec and runtime options.
-   
+
    endpoint-spec keys:
      :method           - HTTP method (:get, :post, :put, :patch, :delete)
      :uri              - URI path, may contain :param placeholders
      :request-format   - :json, :url, :raw, :transit (default: none for GET)
      :response-format  - :json, :text, :raw, :transit (default: :json)
      :timeout          - request timeout in ms (default: 10000)
-   
+     :with-credentials - true to send cookies on cross-origin requests
+
    runtime opts keys:
-     :path-params  - map of path parameter replacements
+     :path-params  - map of path parameter replacements (values percent-encoded)
      :params       - query params (GET) or body params (POST/PUT/PATCH)
-     :headers      - additional headers (e.g. {:authorization \"Bearer ...\"})
-     :on-success   - success callback (set internally)
-     :on-failure   - failure callback (set internally)"
+     :headers      - additional headers (e.g. {:authorization \"Bearer ...\"})"
   [api-options endpoint-spec opts]
   (let [{:keys [base-url]} api-options
         {:keys [method uri request-format response-format timeout with-credentials]} endpoint-spec
@@ -54,7 +45,7 @@
                         (and token (not (contains? (or headers {}) :authorization)))
                         (assoc :authorization (str "Bearer " token)))
         full-uri (str (or base-url "")
-                      (replace-path-params uri path-params))
+                      (sse/replace-path-params uri path-params))
         req-format (case request-format
                      :json (ajax/json-request-format)
                      :url (ajax/url-request-format)
@@ -89,6 +80,11 @@
 
 (defn defapi
   [api-name options endpoints-spec]
+  ;; :_options is where the API-level options live in the same map — an endpoint by that
+  ;; name would silently overwrite them.
+  (when (contains? endpoints-spec :_options)
+    (throw (ex-info ":_options is a reserved name and cannot be used as an endpoint"
+                    {:api-name api-name})))
   (swap! api-specs (fn [old-state]
                      (-> old-state
                          (assoc-in [api-name :_options] options)
@@ -114,8 +110,15 @@
                             {:api-name api-name :endpoint-name endpoint-name :method :sse})))
         c (a/chan 1)
         deliver! (fn [result]
-                   (swap! a-data (fn [old-data]
-                                   (assoc-in old-data [api-name endpoint-name] result)))
+                   ;; The stored slot keeps the last GOOD :data across failures — a UI bound
+                   ;; to the reaction must not go blank because one refresh failed. The
+                   ;; failure itself lands under :error; the caller's channel still gets the
+                   ;; raw result untouched.
+                   (swap! a-data update-in [api-name endpoint-name]
+                          (fn [prev]
+                            (if (:success? result)
+                              result
+                              (assoc (or prev {}) :success? false :error (:data result)))))
                    (a/put! c result))
         fire! (fn [on-result]
                 ;; Rebuilt per attempt on purpose: `build-request-map` reads the bearer token
@@ -168,9 +171,9 @@
    Reconnect is owned here, on a readyState split: `CONNECTING` means EventSource is already
    retrying on the server's `retry:` field, so we only report the drop; `CLOSED` means it
    gave up — which per the HTML spec is what a non-200 status or a wrong Content-Type
-   produces, i.e. our 401 and our 503 — so we re-open on a backoff, re-reading the token
-   from `auth-token-provider` at open time, every time."
-  [api-name endpoint-name {:keys [path-params params on-open on-message on-error] :as _opts}]
+   produces, e.g. a 401 or a 503 — so we re-open on a backoff, re-reading the token from
+   `auth-token-provider` at open time, every time."
+  [api-name endpoint-name {:keys [path-params params on-open on-message on-error events] :as _opts}]
   (let [api-options (get-in @api-specs [api-name :_options])
         endpoint-spec (get-in @api-specs [api-name endpoint-name])
         _ (when (nil? endpoint-spec)
@@ -187,32 +190,33 @@
                 (let [token (when-let [provider @auth-token-provider] (provider))
                       url (sse/stream-url (:base-url api-options) (:uri endpoint-spec)
                                           path-params params token)
-                      es (js/EventSource. url)]
+                      es (js/EventSource. url)
+                      handle-frame (fn [e]
+                                     (let [data (parse-message (.-data e))]
+                                       (put-sse! api-name endpoint-name #(sse/apply-message % data))
+                                       (when on-message (on-message data))))]
                   (reset! (:source handle) es)
                   (set! (.-onopen es)
                         (fn [_]
                           (reset! (:attempt handle) 0)
                           (put-sse! api-name endpoint-name sse/mark-open)
                           (when on-open (on-open))))
-                  (set! (.-onmessage es)
-                        (fn [e]
-                          (let [data (parse-message (.-data e))]
-                            (put-sse! api-name endpoint-name #(sse/apply-message % data))
-                            (when on-message (on-message data)))))
-                  (.addEventListener es "changed"
-                                     (fn [e]
-                                       (let [data (parse-message (.-data e))]
-                                         (put-sse! api-name endpoint-name #(sse/apply-message % data))
-                                         (when on-message (on-message data)))))
-                  ;; A terminal `reconnect` frame is the server closing on purpose — its
-                  ;; deadline or the dropped latch. Re-opening IS the resume: the server's
-                  ;; first frame on the new connection is the current state, so whatever was
-                  ;; missed is replaced rather than replayed.
+                  ;; Unnamed frames arrive on onmessage; frames the server sends with an SSE
+                  ;; `event:` name only fire addEventListener for exactly that name. Which
+                  ;; names a server uses is its own contract — hence the :events option
+                  ;; (default ["changed"]).
+                  (set! (.-onmessage es) handle-frame)
+                  (doseq [ev (or events ["changed"])]
+                    (.addEventListener es ev handle-frame))
+                  ;; A `reconnect` control frame is the server closing on purpose — its own
+                  ;; connection deadline or shedding policy. Re-opening IS the resume: the
+                  ;; server's first frame on the new connection is the current state, so
+                  ;; whatever was missed is replaced rather than replayed.
                   ;; `token-stale` is the one reason a plain re-open cannot recover from: the
                   ;; new connection re-reads the SAME token from `auth-token-provider`, gets
-                  ;; the same 401 at `wrap-stream-auth`, closes, backs off and tries again —
-                  ;; an infinite hot loop against a credential that will never become valid.
-                  ;; Reload first; every other reason keeps the immediate re-open.
+                  ;; refused again, closes, backs off and tries again — a hot loop against a
+                  ;; credential that will never become valid. Reload first; every other
+                  ;; reason keeps the immediate re-open.
                   (.addEventListener es "reconnect"
                                      (fn [e]
                                        (let [reason (:reason (parse-message (.-data e)))]

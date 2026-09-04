@@ -36,8 +36,7 @@
   "Is this `execute` result the server saying the token is merely out of date?
 
    cljs-ajax puts the parsed body of a FAILED request under [:data :response], not [:data] —
-   the app-side accessor is `storage.web.api.response/reason`; this module cannot require it,
-   so the one read is spelled out here."
+   spelled out here so that read has exactly one home."
   [result]
   (and (not (:success? result))
        (= 401 (get-in result [:data :status]))
@@ -46,11 +45,11 @@
 (defn reload-token!
   "The single in-flight token reload, as a channel. Concurrent stale requests park on the
    same promise-chan instead of each firing their own refresh — a burst of parallel requests
-   right after a project is created would otherwise be a refresh storm.
+   would otherwise be a refresh storm.
 
    The registered handler must not itself issue a request that can come back `token-stale`,
-   or it would park on the reload it is inside. `/api/bff/refresh` mounts no auth middleware
-   and cannot, which is what makes this safe."
+   or it would park on the reload it is inside — serve the refresh endpoint without the auth
+   check that produces `token-stale`."
   []
   (or @in-flight
       (let [p (a/promise-chan)]

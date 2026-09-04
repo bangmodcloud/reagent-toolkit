@@ -42,9 +42,9 @@ the gotchas worth knowing before you rely on it.
 ### From Clojars
 
 ```clojure
-{:deps {io.github.bangmodcloud/reagent-form     {:mvn/version "0.1.0"}
-        io.github.bangmodcloud/reagent-http-api {:mvn/version "0.1.0"}
-        io.github.bangmodcloud/reagent-router   {:mvn/version "0.1.0"}}}
+{:deps {io.github.bangmodcloud/reagent-form     {:mvn/version "0.2.0"}
+        io.github.bangmodcloud/reagent-http-api {:mvn/version "0.2.0"}
+        io.github.bangmodcloud/reagent-router   {:mvn/version "0.2.0"}}}
 ```
 
 ### As a git dependency
@@ -57,7 +57,7 @@ coexist in one dependency map.
 ```clojure
 {:deps {io.github.bangmodcloud/reagent-router
         {:git/url   "https://github.com/bangmodcloud/reagent-toolkit.git"
-         :git/tag   "v0.1.0"
+         :git/tag   "v0.2.0"
          :git/sha   "<sha>"
          :deps/root "modules/reagent-router"}}}
 ```
@@ -94,6 +94,8 @@ reagent-toolkit/
 clj -M:dev    # REPL with all three modules + ClojureScript on the classpath
 
 clj -M:test -m shadow.cljs.devtools.cli compile test && node target/node-tests.js
+
+clj -M:test -m shadow.cljs.devtools.cli compile lib-check   # compile every public namespace
 ```
 
 The test build is `:node-test`, so it only loads namespaces free of browser globals —
@@ -108,7 +110,7 @@ clj -T:build clean
 clj -T:build jar-all                                 # target/*.jar
 clj -T:build install-all                             # into ~/.m2
 clj -T:build jar :module '"reagent-router"'          # just one module
-clj -T:build deploy-all :version '"0.1.0"'           # to Clojars
+clj -T:build deploy-all :version '"0.2.0"'           # to Clojars
 ```
 
 `deploy` reads `CLOJARS_USERNAME`/`CLOJARS_PASSWORD` (a

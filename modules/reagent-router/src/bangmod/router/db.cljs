@@ -2,8 +2,8 @@
   (:require [reagent.core :as r]
             [re-frame.core :as rf]))
 
-(def a-matched-route (r/atom {:handler :__default}))
-(def a-app-routes (r/atom []))
+(defonce a-matched-route (r/atom {:handler :__default}))
+(defonce a-app-routes (r/atom []))
 
 (defn re-frame-integration
   []

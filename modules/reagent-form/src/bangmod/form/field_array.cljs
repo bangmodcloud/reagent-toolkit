@@ -1,7 +1,6 @@
 (ns bangmod.form.field-array
-  (:require [bangmod.form.api :as api :refer [IForm]]
+  (:require [bangmod.form.api :as api]
             [bangmod.form.form :as form]
-            [bangmod.form.api :as form-api]
             [reagent.core :as r]
             [reagent.ratom :as ra]))
 
@@ -22,7 +21,7 @@
                  form)
           element-removal-strategy (or element-removal-strategy :both)
           _ (when-not (some #(= element-removal-strategy %) [:both :element-only])
-              (throw (js/Error. (str "Unsupported elemental-removal-strategy " element-removal-strategy))))
+              (throw (js/Error. (str "Unsupported element-removal-strategy " element-removal-strategy))))
           validator (fn [_]
                       (let [errors (map (fn [form]
                                           (api/validate-all-fields form))
@@ -76,7 +75,7 @@
                                                         (api/change-field-value form vk (get v vk)))))
                                                   (concat old-value [form])))))
           ]
-      (fn [{:keys [form name]} render]
+      (fn [_ render]
         (let []
           [:<>
            (let [form-size @a-field-array-form-size

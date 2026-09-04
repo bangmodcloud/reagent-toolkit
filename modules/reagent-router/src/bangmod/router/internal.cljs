@@ -2,8 +2,8 @@
   (:require
    [bidi.bidi :as bidi]
    [cemerick.url :as cemerick]
-   [reagent.core :as r]
    [bangmod.router.db :as db]
+   [bangmod.router.table :as table]
    [pushy.core :as pushy]))
 
 (declare navigate!)
@@ -29,32 +29,20 @@
         (js/console.error msg))))
   (swap! registered-route-keys conj route-key))
 
-(defn compile-route [route]
-  (if (map? route)
-    (into
-     {}
-     (for [[k v] route]
-       (let [compiled-route (compile-route v)]
-         [k compiled-route])))
-    (if (coll? route)
-      (if (-> route first keyword?)
-        (let [component (second route)
-              route-key (first route)]
-          (register-route-key! route-key)
-          (defmethod routed-component route-key [] [component])
-          route-key)
-        (->> route
-             (partition 2)
-             (map (fn [[route-key route-value]]
-                    [route-key (compile-route route-value)]))
-             flatten)))))
+(defn compile-route
+  "Compiles one [pattern matched] route pair into a plain bidi table, installing a
+   `routed-component` method for every [handler-keyword component] leaf. The structural
+   walk lives in `bangmod.router.table` (pure, unit-tested); only the side effects live
+   here."
+  [route]
+  (table/compile-pair
+   route
+   (fn [route-key component]
+     (register-route-key! route-key)
+     (defmethod routed-component route-key [_] [component]))))
 
 (defn register-routes [routes]
-  (swap! db/a-app-routes
-         (fn [current-routes new-routes]
-           (let [final-routes (conj current-routes (into [] (compile-route new-routes)))]
-             final-routes))
-         routes))
+  (swap! db/a-app-routes conj (compile-route routes)))
 
 (defn set-matched-route! [match]
   (reset! db/a-matched-route match))
@@ -79,20 +67,24 @@
     (pushy/pushy set-matched-route! parse)))
 
 (defn start!
-  [{:keys [default-component] :as options}]
-  (defmethod routed-component :default [] (let []
-                                            (if (-> default-component nil? not)
-                                              [default-component]
-                                              [:div "No component found for this route."])))
+  [{:keys [default-component] :as _options}]
+  (defmethod routed-component :default [_]
+    (if (some? default-component)
+      [default-component]
+      [:div "No component found for this route."]))
   (db/re-frame-integration)
   (pushy/start! history))
 
 (defn url-for
   [& args]
-  (let [query-params (-> (filter #(:query %) args) first :query)
+  ;; A map carrying :query contributes the query string and is stripped before the rest of
+  ;; the args reach bidi/path-for as its handler + path-param kwargs.
+  (let [query-map? (fn [x] (and (map? x) (contains? x :query)))
+        query-params (some-> (filter query-map? args) first :query)
+        path-args (remove query-map? args)
         path (->> @db/a-app-routes
                   (map (fn [route]
-                         (apply bidi/path-for (into [route] args))))
+                         (apply bidi/path-for (into [route] path-args))))
                   (filter (complement nil?))
                   first)
         query (when query-params (str "?" (cemerick/map->query query-params)))]

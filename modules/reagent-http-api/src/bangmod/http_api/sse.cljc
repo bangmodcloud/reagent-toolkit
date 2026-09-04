@@ -9,15 +9,22 @@
 
 (defn percent-encode [s]
   #?(:cljs (js/encodeURIComponent (str s))
-     :clj (java.net.URLEncoder/encode (str s) "UTF-8")))
+     ;; URLEncoder is form-encoding: it turns a space into "+", which is wrong in a
+     ;; path/query segment — normalize to %20 to match encodeURIComponent.
+     :clj (str/replace (java.net.URLEncoder/encode (str s) "UTF-8") "+" "%20")))
 
 (defn replace-path-params
-  "`:param` placeholders in `uri` filled from `path-params` — the same rule
-   `bangmod.http-api.internal` applies to a request URI."
+  "`:param` placeholders in `uri` filled from `path-params` — the one rule for both request
+   URIs (`bangmod.http-api.internal`) and stream URLs.
+
+   Longest name substituted first, so `:id` never matches inside `:idx`; values are
+   percent-encoded, so an id containing `/` or a space cannot change the path shape."
   [uri path-params]
-  (reduce-kv (fn [u k v] (str/replace u (str ":" (name k)) (str v)))
-             uri
-             (or path-params {})))
+  (->> (or path-params {})
+       (sort-by (fn [[k _]] (count (name k))) >)
+       (reduce (fn [u [k v]]
+                 (str/replace u (str ":" (name k)) (percent-encode (str v))))
+               uri)))
 
 (defn- query-string [params token]
   (let [pairs (cond-> (vec (for [[k v] params]
@@ -29,7 +36,8 @@
   "The full URL an `EventSource` is opened against.
 
    `EventSource` cannot set request headers, so the bearer token travels as
-   `?access_token=` (RFC 6750 §2.3) — the one route in this API that accepts it."
+   `?access_token=` (RFC 6750 §2.3) — the server must accept it there on SSE routes, and
+   should keep such URLs out of its access logs."
   [base-url uri path-params params token]
   (let [path (str (or base-url "") (replace-path-params uri path-params))
         qs (query-string params token)]

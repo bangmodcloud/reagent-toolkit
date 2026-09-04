@@ -56,13 +56,10 @@ See the [root README](../README.md#installation) for `deps.edn` / git-dependency
 
 ## Route syntax
 
-[bidi](https://github.com/juxt/bidi) route tables, with two constraints:
-
-- Each leaf is `[handler-keyword component]` instead of bidi's bare keyword.
-- Route tables must be **maps** (`{pattern leaf-or-submap}`). bidi's alternative
-  vector-of-pairs table syntax (`[[pattern leaf] [pattern leaf] ...]`) is **not** supported —
-  the route compiler misparses it silently. Path-parameter patterns go in map *keys*, where
-  they work fine.
+[bidi](https://github.com/juxt/bidi) route tables, with one change: each leaf is
+`[handler-keyword component]` instead of bidi's bare handler keyword. Map tables and
+vector-of-pairs tables both work; path-parameter patterns go in the pattern position
+(a map key, or the first element of a pair):
 
 ```clojure
 ["" {"/" [:home home-view]
@@ -70,6 +67,10 @@ See the [root README](../README.md#installation) for `deps.edn` / git-dependency
      "/settings" {"/profile" [:settings-profile profile-view]
                   "/billing" [:settings-billing billing-view]}}]
 ```
+
+A malformed table — a leaf without a component, a route that isn't a `[pattern matched]`
+pair — throws at `register-routes` time with the offending form in the message, instead of
+compiling into a table that silently matches nothing.
 
 `:home` / `:project-detail` / ... is the route's identity everywhere else in this API
 (`url-for`, `navigate!`, `atom-matched-route`); the paired component is what
@@ -233,3 +234,6 @@ Worth wiring into a dev-only check after every feature has initialized.
   after `start!` still work, but nothing renders them until the next navigation.
 - **An orphan route renders the default component, not an error** — no exception, no console
   warning. `registration-report`'s `:orphan-routes` is the only way to find it.
+- **Overlapping URL patterns across features aren't detected.** Two features registering the
+  same path under different handler keywords is first-registered-wins, silently —
+  `register-route-key!` only catches an identical handler keyword, not an identical URL.

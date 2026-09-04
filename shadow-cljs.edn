@@ -1,10 +1,25 @@
-;; Test build. Only namespaces free of browser globals live here — `pushy`,
-;; `cljs-ajax` and `reagent` all touch `js/window` / `js/XMLHttpRequest` at load
-;; time, which is why `retry` and `sse` were split out as `.cljc` in the first
-;; place. Anything requiring those needs a `:browser-test` build instead.
+;; :test — only namespaces free of browser globals live here: `pushy`, `cljs-ajax` and
+;; `reagent` all touch `js/window` / `js/XMLHttpRequest` at load time, which is why the
+;; testable halves are split out (`retry.cljc`, `sse.cljc`, `table.cljc`).
+;;
+;; :lib-check — compiles EVERY public namespace (react resolved to a global, so no npm
+;; install needed). It exists because :test alone never compiles the reagent-dependent
+;; namespaces, which once let an unrequired `cljs.pprint` reference slip through.
 {:deps  {:aliases [:test]}
 
  :builds
- {:test {:target    :node-test
-         :output-to "target/node-tests.js"
-         :ns-regexp "-test$"}}}
+ {:test      {:target    :node-test
+              :output-to "target/node-tests.js"
+              :ns-regexp "-test$"}
+
+  :lib-check {:target     :browser
+              :output-dir "target/lib-check"
+              :asset-path "/lib-check"
+              :modules    {:lib {:entries [bangmod.form.core
+                                           bangmod.http-api.core
+                                           bangmod.router.core
+                                           bangmod.router.views]}}
+              :js-options {:resolve {"react"            {:target :global :global "React"}
+                                     "react-dom"        {:target :global :global "ReactDOM"}
+                                     "react-dom/client" {:target :global :global "ReactDOMClient"}
+                                     "react-dom/server" {:target :global :global "ReactDOMServer"}}}}}}

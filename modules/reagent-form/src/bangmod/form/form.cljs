@@ -3,14 +3,11 @@
             [reagent.core :as r]
             [reagent.ratom :as ra]
             [clojure.core.async :as async]
-            [clojure.core.async.impl.channels :as async-channel]
-            [reagent.ratom :as ratom]
-            ))
+            [cljs.core.async.impl.protocols :as async-protocols]))
 
 (defn atom? [subject]
-  (or (instance? ra/Reaction subject)
-      (instance? ra/RAtom subject)
-      (instance? ra/RCursor subject)))
+  ;; Anything derefable counts: reagent Reaction/RAtom/RCursor, plain cljs atoms, delays.
+  (satisfies? IDeref subject))
 
 (deftype ReagentForm [a-fields ^:mutable all-validators a-form a-initial-values ^:mutable subscription]
   IForm
@@ -49,18 +46,19 @@
                           (when error {:field fields-name :error error}))) (remove nil?)))
 
   (register-field [this field-name {:keys [validators default-value on-change value on-blur id type placeholder on-focus] :as field-config}]
-    (set! all-validators (assoc-in all-validators [field-name] (or validators [])))
-    (if (nil? (get-in @a-fields [field-name]))
-      (swap! a-fields (fn [fields]
-                        (assoc-in fields [field-name] {:default-value default-value
-                                                       :type nil
-                                                       :error nil
-                                                       :value nil
-                                                       :touched false
-                                                       :id nil})))
-      (swap! a-fields (fn [fields]
-                        (assoc-in fields [field-name :default-value] default-value))))
+    (set! all-validators (assoc all-validators field-name (or validators [])))
+    (if (nil? (get @a-fields field-name))
+      (swap! a-fields assoc field-name {:default-value default-value
+                                        :error nil
+                                        :value nil
+                                        :touched false})
+      ;; Re-registration happens on every render; only write when something changed, so
+      ;; render passes don't ping the ratom's watchers for nothing.
+      (when (not= default-value (get-in @a-fields [field-name :default-value]))
+        (swap! a-fields assoc-in [field-name :default-value] default-value)))
     (api/make-field-subscription this field-name)
+    ;; No :placeholder default on purpose — a library must not put words in the UI.
+    ;; Whatever the caller passed (placeholder included) flows through the merge.
     (merge
       (apply dissoc field-config [:validators :default-value :on-change :value])
       {:value     (or value
@@ -72,13 +70,11 @@
        :on-blur   (or on-blur
                       #(api/validate-field this field-name))
        :id (or id field-name)
-       :type (or type "text")
-       :placeholder (or placeholder "Enter")}))
+       :type (or type "text")}))
   (deregister-fields [this field-name-list]
-    (swap! a-fields (fn [fields]
-                      (apply dissoc fields (if (coll? field-name-list)
-                                             field-name-list
-                                             (vector field-name-list))))))
+    (let [names (if (coll? field-name-list) field-name-list [field-name-list])]
+      (set! all-validators (apply dissoc all-validators names))
+      (swap! a-fields (fn [fields] (apply dissoc fields names)))))
   (change-field-value [this field-name field-value]
     (swap! a-fields (fn [fields]
                       (-> fields
@@ -89,16 +85,16 @@
     (when-not (get-in @a-fields [field-name :touched])
       (swap! a-fields (fn [fields]
                         (-> fields
-                            (assoc-in [field-name :value] (or (get-in @a-fields [field-name :value])
+                            (assoc-in [field-name :value] (or (get-in fields [field-name :value])
                                                               (get-in @a-initial-values [field-name])
-                                                              (get-in @a-fields [field-name :default-value])))
+                                                              (get-in fields [field-name :default-value])))
                             (assoc-in [field-name :touched] true)))))
     (api/validate-field this field-name))
   (validate-field [this field-name]
     (let [field-value (api/get-raw-field-value this field-name)]
-      (loop [validators (get-in all-validators [field-name])
+      (loop [validators (get all-validators field-name)
              error nil]
-        (if (or (-> error nil? not) (empty? validators))
+        (if (or (some? error) (empty? validators))
           (swap! a-fields (fn [fields] (assoc-in fields [field-name :error] error)))
           (recur (rest validators)
                  ((first validators) field-value))))))
@@ -106,20 +102,23 @@
     (doseq [field-name (keys @a-fields)]
       (api/touch this field-name))
     (->> (keys @a-fields)
-         (some (fn [e] (get-in @a-fields [e :error])))
-         ))
+         (some (fn [e] (get-in @a-fields [e :error])))))
   (-init-form [this]
     (set! subscription (assoc-in subscription [:form :display-error] (ra/make-reaction #(when-not (get-in @a-form [:is-submitting])
                                                                                           (get-in @a-form [:error]))))))
   (get-initial-values [this]
     @a-initial-values)
   (get-form-display-error [this]
-    (get-in subscription [:form :display-error]))
+    ;; Deref'd here so it behaves like get-field-display-error: the caller gets the value,
+    ;; and reading it inside a render still registers the reactive dependency.
+    @(get-in subscription [:form :display-error]))
   (get-is-submitting [this]
     (get-in @a-form [:is-submitting]))
 
   (handle-form-submission-result [this result-bundle]
-    (let [[result form-error-msg] result-bundle]
+    (let [[result form-error-msg] (if (sequential? result-bundle)
+                                    result-bundle
+                                    [result-bundle])]
       (case result
         :success (swap! a-form (fn [form]
                                  (-> form
@@ -131,21 +130,24 @@
                                                                  "Form submission error with no error message !!"
                                                                  form-error-msg))
                                             (assoc-in [:is-submitting] false))))
-        (throw (js/Error. "Wrong result from form submission: " result)))))
+        ;; A wrong result must not leave the form stuck submitting — surface it as a form
+        ;; error and log it, instead of throwing (which used to freeze :is-submitting).
+        (let [msg (str "Wrong result from form submission: " (pr-str result-bundle))]
+          (js/console.error msg)
+          (swap! a-form (fn [form]
+                          (-> form
+                              (assoc-in [:error] msg)
+                              (assoc-in [:is-submitting] false))))))))
   (handle-submit [this on-submit-fn]
     (fn [event]
-      ;; prevent default
       (when event
         (.preventDefault event))
       ;; touch all fields to validate
-      (loop [field-names (map first @a-fields)]
-        (when-not (empty? field-names)
-          (api/touch this (first field-names))
-          (recur (rest field-names))))
-      ;; GO !!
+      (doseq [field-name (keys @a-fields)]
+        (api/touch this field-name))
       (when-not (get-in @a-form [:is-submitting])
         (let [has-field-error? (some (fn [[_ field-data]]
-                                       (-> (get-in field-data [:error]) nil? not))
+                                       (some? (get-in field-data [:error])))
                                      @a-fields)]
           (when-not has-field-error?
             (swap! a-form (fn [form]
@@ -153,12 +155,16 @@
                                 (assoc-in [:is-submitting] true)
                                 (assoc-in [:error] nil))))
             (let [values (api/get-form-values this)
-                  result (on-submit-fn values)]
-              (if (instance? async-channel/ManyToManyChannel result)
+                  ;; A throwing on-submit is a failed submission, not a frozen form.
+                  result (try (on-submit-fn values)
+                              (catch :default e
+                                (js/console.error "on-submit threw:" e)
+                                [:failed (or (some-> e .-message) (str e))]))]
+              (if (satisfies? async-protocols/ReadPort result)
                 (async/go (api/handle-form-submission-result this (async/<! result)))
                 (api/handle-form-submission-result this result)))))))))
 
-(def ^:private forms (atom {}))
+(defonce ^:private forms (atom {}))
 
 (defn get-form
   [form-id]
@@ -167,41 +173,22 @@
       (throw (js/Error. (str "Form with id=" form-id " not found."))))
     form))
 
-
+(defn- coerce-initial-values [initial-values]
+  (cond
+    (atom? initial-values) initial-values
+    (nil? initial-values) (r/atom {})
+    (map? initial-values) (r/atom initial-values)
+    :else (throw (js/Error. (str "initial-values must be a map or something derefable"
+                                 " (reagent atom/reaction/cursor, plain atom), got: "
+                                 (pr-str initial-values))))))
 
 (defn create-form
   ([form-id {:keys [initial-values]}]
-   (let [a-initial-value (if (atom? initial-values)
-                           initial-values
-                           (if (nil? initial-values)
-                             (r/atom {})
-                             (if (map? initial-values)
-                               (r/atom initial-values)
-                               (do
-                                 (throw (js/Error. (str "initial value must be a map or Atom like instance")))))))
-         form (->ReagentForm (r/atom {}) {} (r/atom {}) a-initial-value {})]
+   (let [form (->ReagentForm (r/atom {}) {} (r/atom {}) (coerce-initial-values initial-values) {})]
      (api/-init-form form)
      (swap! forms (fn [v] (assoc-in v [form-id] form)))
      (get-form form-id)))
   ([{:keys [initial-values]}]
-   (let [a-initial-value (if (or (instance? ra/Reaction initial-values)
-                                 (instance? ra/RAtom initial-values)
-                                 (instance? ra/RCursor initial-values))
-                           initial-values
-                           (if (nil? initial-values)
-                             (r/atom {})
-                             (if (map? initial-values)
-                               (r/atom initial-values)
-                               (do
-                                 (cljs.pprint/pprint initial-values)
-                                 (throw (js/Error. (str "initial value must be a map or Atom like instance")))))))
-         form (->ReagentForm (r/atom {}) {} (r/atom {}) a-initial-value {})]
+   (let [form (->ReagentForm (r/atom {}) {} (r/atom {}) (coerce-initial-values initial-values) {})]
      (api/-init-form form)
      form)))
-
-
-
-;(defn submit-form-submission-result
-;  [form-id result]
-;  (let [form (get-form form-id)]
-;    (handle-form-submission-result form result)))

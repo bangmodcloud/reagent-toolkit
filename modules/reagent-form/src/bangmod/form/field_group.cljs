@@ -1,9 +1,7 @@
 (ns bangmod.form.field-group
-  (:require [bangmod.form.api :as api :refer [IForm]]
+  (:require [bangmod.form.api :as api]
             [bangmod.form.form :as form]
-            [reagent.core :as r]
-            [reagent.ratom :as ra]
-            ))
+            [reagent.ratom :as ra]))
 
 (defn create-field-group-form
   [initial-values]
@@ -25,7 +23,7 @@
                         error))
           _ (api/register-field form name {:validators [validator]})
           _ (api/change-field-value form name a-value)]
-      (fn [{:keys [_ _]} render]
+      (fn [_ render]
         (let []
           [:<>
            (render field-group-form)]

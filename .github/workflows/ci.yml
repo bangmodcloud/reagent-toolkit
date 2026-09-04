@@ -39,5 +39,8 @@ jobs:
           clojure -M:test -m shadow.cljs.devtools.cli compile test
           node target/node-tests.js
 
+      - name: Compile every public namespace
+        run: clojure -M:test -m shadow.cljs.devtools.cli compile lib-check
+
       - name: Build all module jars
         run: clojure -T:build jar-all

@@ -66,7 +66,7 @@ see below.
 
 | Function / component | Description |
 | --- | --- |
-| `(create-form form-id)` / `(create-form form-id {:keys [initial-values]})` | Creates and registers a form under `form-id`. `initial-values` is a map (or reagent atom/reaction of one) of `field-name -> value`, used before a field is touched. |
+| `(create-form form-id)` / `(create-form form-id {:keys [initial-values]})` | Creates and registers a form under `form-id`. `initial-values` is a map of `field-name -> value` (or anything derefable holding one — reagent atom/reaction/cursor, plain atom), used before a field is touched. |
 | `(make-api form)` | Returns the bound functions below as a map, meant to be destructured once. Throws if `form` isn't a `ReagentForm`. |
 | `(create-success-submission-result)` / `(create-failed-submission-result msg)` | The two values an `on-submit` fn (passed to `handle-submit`) must produce, directly or via a `core.async` channel. |
 | `FieldArray`, `FieldGroup` | Components for repeating/nested field groups — see below. |
@@ -85,15 +85,15 @@ Bound functions returned by `make-api`:
 | `touch field-name` | Marks touched (so its error becomes visible) and validates, without changing value. |
 | `get-all-fields-errors` | `({:field name :error err} ...)` for every field currently in error. |
 | `get-is-submitting` | `true` while a submission is in flight. |
-| `get-form-display-error` | Returns a *reaction* over the form-level error from `create-failed-submission-result` — deref it (`@(get-form-display-error)`), unlike `get-field-display-error` which derefs for you. Suppressed (nil) while submitting. |
+| `get-form-display-error` | Form-level error from `create-failed-submission-result` (or from an `on-submit` that threw). `nil` while submitting. |
 | `handle-submit on-submit-fn` | Returns an `:on-submit` handler — see below. |
 
 `field-config` keys for `register-field`:
 
 - `:validators` — vector of validator functions (below). Default `[]`.
 - `:default-value` — value before the field has a real or initial value.
-- `:id` — defaults to `field-name`. `:type` — defaults to `"text"`. `:placeholder` — defaults
-  to `"Enter"`.
+- `:id` — defaults to `field-name`. `:type` — defaults to `"text"`. `:placeholder` — no
+  default; passed through only if you provide one.
 - `:on-change` / `:on-blur` / `:on-focus` — override the generated handler.
 
 ### Calling `bangmod.form.api` directly
@@ -141,10 +141,12 @@ touches and validates every field, and — only if none now has an error — mar
 submitting and calls `(on-submit-fn field-values)` with a plain map of every field's raw
 value (destructure directly: `(fn [{:keys [email password]}] ...)`). If any field has an
 error, `on-submit-fn` is never called; the errors are already visible since every field was
-just touched. `on-submit-fn`'s return value — directly, or eventually via a `core.async`
-channel — must be `(create-success-submission-result)` or `(create-failed-submission-result
-msg)`; either way this clears `get-is-submitting` and, on failure, sets
-`get-form-display-error` to `msg`.
+just touched. `on-submit-fn`'s return value — directly, or eventually via any
+core.async read port — must be `(create-success-submission-result)` or
+`(create-failed-submission-result msg)`; either way this clears `get-is-submitting` and, on
+failure, sets `get-form-display-error` to `msg`. An `on-submit-fn` that throws (or returns
+something else entirely) is treated as a failed submission — the form never sticks in a
+submitting state.
 
 ## Field arrays and field groups
 
@@ -274,7 +276,6 @@ just "kick off the login"; the redirect is what reacts to it actually completing
 
 - **The default `:on-change` assumes a native DOM change event** — see "Custom controls"
   above for anything else.
-- **`:placeholder` defaults to `"Enter"`**, not to nothing — pass `""` if you want none.
 - **An invalid submit touches every field and returns; `on-submit-fn` is never called.**
   There's no separate "on invalid" callback — check `get-field-display-error` /
   `get-all-fields-errors` in render.

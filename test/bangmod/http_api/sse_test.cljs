@@ -6,7 +6,12 @@
   (is (= "/api/leaves/42" (sse/replace-path-params "/api/leaves/:id" {:id 42})))
   (is (= "/api/a/1/b/2" (sse/replace-path-params "/api/a/:x/b/:y" {:x 1 :y 2})))
   (testing "no params leaves the uri untouched"
-    (is (= "/api/leaves" (sse/replace-path-params "/api/leaves" nil)))))
+    (is (= "/api/leaves" (sse/replace-path-params "/api/leaves" nil))))
+  (testing "a param name that is a prefix of another cannot corrupt it"
+    (is (= "/x/1/2" (sse/replace-path-params "/x/:id/:idx" {:id 1 :idx 2})))
+    (is (= "/x/2/1" (sse/replace-path-params "/x/:idx/:id" {:id 1 :idx 2}))))
+  (testing "values are percent-encoded so an id cannot change the path shape"
+    (is (= "/api/p/a%20b%2Fc" (sse/replace-path-params "/api/p/:id" {:id "a b/c"})))))
 
 (deftest stream-url-test
   (testing "base-url, path params, query params and the token all land in one url"

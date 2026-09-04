@@ -18,6 +18,7 @@
                       :request-format  - :json, :url, :transit, :raw
                       :response-format - :json, :text, :transit, :raw
                       :timeout         - timeout in ms (default: 10000)
+                      :with-credentials - true to send cookies on cross-origin requests
    
    Example:
      (defapi :leave
@@ -43,6 +44,10 @@
                      :headers     - additional headers (e.g. {:authorization \"Bearer ...\"})
    
    Result channel receives a map: {:success? bool, :data response-data}
+
+   The reaction / re-frame slot for the endpoint keeps its last successful :data across
+   failures — a failed call sets :success? false and puts the failure under :error there,
+   so a UI bound to `get-data-reaction` does not go blank because one refresh failed.
    
    Examples:
      (execute :leave :all-leaves)
@@ -67,6 +72,9 @@
                     first byte, so nothing can slip between the snapshot and the stream.
      :on-message  - 1-arg fn receiving the parsed `data` of one frame
      :on-error    - 1-arg fn receiving a message
+     :events      - extra named SSE event types delivered to :on-message (default
+                    [\"changed\"]). Unnamed frames always arrive; a frame the server sends
+                    with an `event:` name only fires a listener registered for that name.
 
    Example:
      (subscribe :account :changes {:on-open #(load!) :on-message (fn [_] (load!))})"
@@ -100,6 +108,10 @@
 
 (defn get-data-reaction
   "Get a reagent reaction for an endpoint's response data.
-   Useful for reactive UI updates."
+   Useful for reactive UI updates. Throws if the endpoint was never declared —
+   dereferencing the nil would otherwise fail far away with no name attached."
   [api-name endpoint-name]
-  (get-in @internal/a-reactions [api-name endpoint-name]))
+  (or (get-in @internal/a-reactions [api-name endpoint-name])
+      (throw (ex-info (str "No reaction for " (name api-name) "/" (name endpoint-name)
+                           " — was it declared with defapi?")
+                      {:api-name api-name :endpoint-name endpoint-name}))))

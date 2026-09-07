@@ -7,6 +7,45 @@ ready-to-spread props map for an `[:input ...]` (value, change/blur/focus handle
 — no event wiring of your own); `handle-submit` gates submission on every field validating
 first.
 
+## Why reagent-form?
+
+Two reasons, and they're the whole pitch.
+
+**A field is one expression.** No action types, no per-field event handlers, no schema DSL,
+nothing to register anywhere else. `register-field` returns the complete controlled-input
+wiring — value, `on-change`, `on-blur`, `on-focus`, id, type — as a props map you spread
+straight onto the input, and `handle-submit` is the entire submission pipeline
+(validate everything → collect values → call your function → track submitting/error state):
+
+```clojure
+[:input (register-field :email {:type "email" :validators [required]})]
+```
+
+That line is a working, validated, controlled field. The [quick start](#quick-start) below
+is a complete login form and fits on one screen.
+
+**Big forms don't re-render on every keystroke.** Field state lives in one atom, but no
+component ever watches that atom directly — `register-field` sets up a
+[reagent reaction](https://github.com/reagent-project/reagent/blob/master/doc/ManagingState.md)
+*per field* (one for the display value, one for the display error), and a reaction only
+notifies its watchers when its own output actually changes. So a keystroke in `:email`
+recomputes cheap lookups for the other fields' reactions, but their outputs are unchanged —
+only components that read `:email` re-render. The cost of a keystroke scales with the
+components showing *that field*, not with the size of the form.
+
+Nested forms push this further: `FieldArray` and `FieldGroup` register their aggregate value
+on the parent **as a reaction, once** — typing inside a row of a 50-row array never writes
+to the parent form's state at all. The parent only reads through that reaction when
+something asks for the values (submit, `get-form-values`); until then the edit stays local
+to the row's own sub-form. Validation churn is invisible too: error reactions emit `nil`
+until a field has been touched, so re-validating untouched fields changes nothing the render
+layer can see.
+
+The one honest caveat: the granularity is your component boundaries. A single component that
+renders fifty `register-field` calls still re-renders as one unit when any of them changes —
+split big forms into per-section components (`FieldGroup`/`FieldArray` push you that way
+anyway) and only the edited section re-renders.
+
 ## Install
 
 See the [root README](../README.md#installation) for `deps.edn` / git-dependency snippets.

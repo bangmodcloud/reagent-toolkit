@@ -8,7 +8,7 @@ use — take `reagent-router` without dragging in a form library or an HTTP clie
 
 | Artifact                                  | Namespace            | What it does                                                 | Docs                                 |
 | ------------------------------------------ | -------------------- | ------------------------------------------------------------ | ------------------------------------- |
-| `io.github.bangmodcloud/reagent-form`     | `bangmod.form.*`     | Form state, validation, field arrays and field groups        | [docs/form.md](docs/form.md)         |
+| `io.github.bangmodcloud/reagent-form`     | `bangmod.form.*`     | One-expression fields; per-field reactions keep big forms from re-rendering on every keystroke | [docs/form.md](docs/form.md)         |
 | `io.github.bangmodcloud/reagent-http-api` | `bangmod.http-api.*` | Declarative HTTP + SSE client, GET and live-stream on one URI | [docs/http-api.md](docs/http-api.md) |
 | `io.github.bangmodcloud/reagent-router`   | `bangmod.router.*`   | bidi + pushy routing, each feature registers its own routes   | [docs/router.md](docs/router.md)     |
 

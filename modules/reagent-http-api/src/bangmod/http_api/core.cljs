@@ -11,9 +11,10 @@
                       :base-url - base URL prefix for all endpoints
    endpoints-spec - map of endpoint-name -> endpoint-spec:
                       :method          - :get, :post, :put, :patch, :delete, or :sse
-                                         (:sse endpoints are opened with `subscribe`, and
-                                          `execute` refuses them; :request-format,
-                                          :response-format and :timeout do not apply)
+                                         (:sse endpoints are opened with `subscribe` or
+                                          `execute`; `raw-execute` refuses them;
+                                          :request-format, :response-format and :timeout
+                                          do not apply)
                       :uri             - URI path (supports :param placeholders)
                       :request-format  - :json, :url, :transit, :raw
                       :response-format - :json, :text, :transit, :raw
@@ -33,7 +34,17 @@
   [api-name options endpoints-spec]
   (internal/defapi api-name options endpoints-spec))
 
-(defn execute
+(defn get-data-reaction
+  "Get a reagent reaction for an endpoint's stored slot — the latest value, not the last
+   call. Useful for reactive UI updates. Throws if the endpoint was never declared —
+   dereferencing the nil would otherwise fail far away with no name attached."
+  [api-name endpoint-name]
+  (or (get-in @internal/a-reactions [api-name endpoint-name])
+      (throw (ex-info (str "No reaction for " (name api-name) "/" (name endpoint-name)
+                           " — was it declared with defapi?")
+                      {:api-name api-name :endpoint-name endpoint-name}))))
+
+(defn raw-execute
   "Execute an HTTP API call. Returns a core.async channel with the result.
    
    api-name      - keyword identifying the API (as defined in defapi)
@@ -47,22 +58,55 @@
 
    The reaction / re-frame slot for the endpoint keeps its last successful :data across
    failures — a failed call sets :success? false and puts the failure under :error there,
-   so a UI bound to `get-data-reaction` does not go blank because one refresh failed.
+   so a UI bound to `get-data-reaction` / `execute` does not go blank because one refresh
+   failed.
    
    Examples:
-     (execute :leave :all-leaves)
-     (execute :leave :create-leave {:params {:start-date \"2026-01-01\"}})
-     (execute :leave :update-leave {:path-params {:id 123}
-                                    :params {:status \"approved\"}
-                                    :headers {:authorization \"Bearer token\"}})"
+     (a/<! (raw-execute :leave :all-leaves))
+     (a/<! (raw-execute :leave :create-leave {:params {:start-date \"2026-01-01\"}}))
+     (a/<! (raw-execute :leave :update-leave {:path-params {:id 123}
+                                              :params {:status \"approved\"}
+                                              :headers {:authorization \"Bearer token\"}}))"
   ([api-name endpoint-name]
    (internal/execute api-name endpoint-name {}))
   ([api-name endpoint-name opts]
    (internal/execute api-name endpoint-name opts)))
 
+(defn execute
+  "Fire an endpoint and return something to deref for its latest value — `raw-execute` plus
+   `get-data-reaction` in one step for a request, `subscribe` for an `:sse` endpoint. Either
+   way `(:data @x)` is the latest body/frame, for the common case of a component that
+   loads on mount and renders whatever the endpoint currently holds:
+
+     (defn my-info []
+       (r/with-let [info (http-api/execute :api :myinfo)]   ; fires once, here
+         [:div (:data @info)]
+         (finally (http-api/unsubscribe! info))))           ; no-op unless :sse
+
+   Request endpoint: returns the endpoint's reaction over its shared slot — nil until the
+   first response, then {:success? true :data <body>}, and after a failure the same map with
+   :success? false and :error <cljs-ajax error map> merged in (the last good :data survives).
+   Any other call against the same endpoint updates it too. `opts` as for `raw-execute`.
+
+   `:sse` endpoint: opens the stream and returns the subscription handle, which derefs to
+   {:sse? true :connected? bool :data <latest frame> :message-count n :error msg-or-nil}.
+   `opts` as for `subscribe` — pass `:on-open`/`:on-message` when you need callbacks too.
+   The handle must reach `unsubscribe!` when the component unmounts.
+
+   Use `raw-execute` when you need one specific request's result as a value (a go block, a
+   callback, an error branch)."
+  ([api-name endpoint-name]
+   (execute api-name endpoint-name {}))
+  ([api-name endpoint-name opts]
+   (if (= :sse (get-in @internal/api-specs [api-name endpoint-name :method]))
+     (internal/subscribe api-name endpoint-name opts)
+     (do (raw-execute api-name endpoint-name opts)
+         (get-data-reaction api-name endpoint-name)))))
+
 (defn subscribe
   "Open a live subscription to an endpoint declared `:method :sse`. Returns a handle for
-   `unsubscribe!`.
+   `unsubscribe!`; deref it for the stream's latest state
+   ({:sse? true :connected? bool :data <latest frame> :message-count n :error msg-or-nil}).
 
    opts:
      :path-params - map for URI :param replacement
@@ -82,7 +126,9 @@
   ([api-name endpoint-name opts] (internal/subscribe api-name endpoint-name opts)))
 
 (defn unsubscribe!
-  "Close a subscription opened with `subscribe` and cancel any pending reconnect."
+  "Close a subscription opened with `subscribe` (or `execute` on an `:sse` endpoint) and
+   cancel any pending reconnect. A no-op on anything else — a plain-request reaction, nil —
+   so a component can pass whatever `execute` returned."
   [handle]
   (internal/unsubscribe! handle))
 
@@ -105,13 +151,3 @@
    response data into re-frame db at [:_http-api :data]."
   []
   (re-frame-integration/integrate {:data-atom internal/a-data}))
-
-(defn get-data-reaction
-  "Get a reagent reaction for an endpoint's response data.
-   Useful for reactive UI updates. Throws if the endpoint was never declared —
-   dereferencing the nil would otherwise fail far away with no name attached."
-  [api-name endpoint-name]
-  (or (get-in @internal/a-reactions [api-name endpoint-name])
-      (throw (ex-info (str "No reaction for " (name api-name) "/" (name endpoint-name)
-                           " — was it declared with defapi?")
-                      {:api-name api-name :endpoint-name endpoint-name}))))

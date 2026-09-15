@@ -154,10 +154,19 @@
     (js->clj (js/JSON.parse raw) :keywordize-keys true)
     (catch :default _ raw)))
 
+;; The handle `subscribe` returns. A record so the lifecycle atoms stay keyword-addressable,
+;; derefable so a component holds ONE value that both renders the stream's latest frame and
+;; closes the stream on unmount — the same shape `execute` hands back for a plain request.
+(defrecord Subscription [source timer attempt closed? reaction]
+  IDeref
+  (-deref [_] @reaction))
+
 (defn unsubscribe!
-  "Closes the EventSource and cancels any pending reconnect."
+  "Closes the EventSource and cancels any pending reconnect. Anything that is not a
+   `Subscription` — the reaction `execute` returns for a plain request, nil — is a no-op, so
+   a component can `unsubscribe!` whatever `execute` gave it without knowing the method."
   [handle]
-  (when handle
+  (when (instance? Subscription handle)
     (reset! (:closed? handle) true)
     (when-let [t @(:timer handle)] (js/clearTimeout t))
     (reset! (:timer handle) nil)
@@ -184,7 +193,8 @@
             (throw (ex-info (str (name api-name) "/" (name endpoint-name)
                                  " is not an SSE endpoint — use execute, not subscribe")
                             {:api-name api-name :endpoint-name endpoint-name})))
-        handle {:source (atom nil) :timer (atom nil) :attempt (atom 0) :closed? (atom false)}]
+        handle (->Subscription (atom nil) (atom nil) (atom 0) (atom false)
+                               (get-in @a-reactions [api-name endpoint-name]))]
     (letfn [(open! []
               (when-not @(:closed? handle)
                 (let [token (when-let [provider @auth-token-provider] (provider))

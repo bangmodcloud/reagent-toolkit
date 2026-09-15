@@ -29,7 +29,8 @@ the gotchas worth knowing before you rely on it.
 (defapi :account {:base-url "https://api.example.com"}
   {:get     {:method :get :uri "/api/account/me" :response-format :json}
    :changes {:method :sse :uri "/api/account/me"}})
-(http-api/execute :account :get)
+(let [account (http-api/execute :account :get)]        ; fires once, returns a reaction
+  (fn [] [:div (:name (:data @account))]))
 (http-api/subscribe :account :changes {:on-message #(rf/dispatch [:account/update %])})
 
 ;; router: each feature registers its own routes; one panel renders whichever matched

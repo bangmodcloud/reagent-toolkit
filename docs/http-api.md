@@ -4,8 +4,8 @@
 
 A declarative wrapper around [cljs-ajax](https://github.com/JulianBirch/cljs-ajax) for REST
 calls, plus a live-update path (`:method :sse`) and optional re-frame integration. Describe
-each API once as a map of endpoints; `execute`/`subscribe` handle the request/stream, bearer
-token injection, and (for SSE) reconnects.
+each API once as a map of endpoints; `execute`/`raw-execute`/`subscribe` handle the
+request/stream, bearer token injection, and (for SSE) reconnects.
 
 ## Install
 
@@ -22,6 +22,33 @@ See the [root README](../README.md#installation) for `deps.edn` / git-dependency
   {:get {:method :get :uri "/api/query/account-projection/me" :response-format :json}})
 ```
 
+Load on mount, render whatever the endpoint holds — `execute` fires the request and returns
+the endpoint's reaction:
+
+```clojure
+(ns myapp.feature.account.view
+  (:require [bangmod.http-api.core :as http-api]))
+
+(defn account-card []
+  (let [account (http-api/execute :account :get)]   ; request fires once, here
+    (fn []
+      (if-let [acct (:data @account)]
+        [:div (:name acct)]
+        [:div "Loading..."]))))
+```
+
+The reaction holds `nil` until the first response, then `{:success? true :data <parsed
+body>}`; after a failed call it keeps the last good `:data`, flips `:success?` to `false` and
+adds `:error <cljs-ajax error map>`. It is the endpoint's shared slot, so any other call
+against `:account/:get` updates it too.
+
+When you need *this* request's result as a value — a go block, a callback, an error branch —
+`raw-execute` returns a `core.async` channel delivering exactly one map:
+`{:success? true :data <parsed response body>}` on success, or
+`{:success? false :data <cljs-ajax error map>}` on failure (that shape — `:status`,
+`:response`, ... — is [cljs-ajax's](https://github.com/JulianBirch/cljs-ajax), not this
+library's):
+
 ```clojure
 (ns myapp.feature.account.event
   (:require [cljs.core.async :as a]
@@ -30,17 +57,29 @@ See the [root README](../README.md#installation) for `deps.edn` / git-dependency
 
 (defn load-account! []
   (a/go
-    (let [res (a/<! (http-api/execute :account :get))]
+    (let [res (a/<! (http-api/raw-execute :account :get))]
       (if (:success? res)
         (rf/dispatch [:account/set (:data res)])
         (rf/dispatch [:account/set-error (:data res)])))))
 ```
 
-`execute` returns a `core.async` channel delivering exactly one map:
-`{:success? true :data <parsed response body>}` on success, or
-`{:success? false :data <cljs-ajax error map>}` on failure (that shape — `:status`,
-`:response`, ... — is [cljs-ajax's](https://github.com/JulianBirch/cljs-ajax), not this
-library's).
+`execute` is exactly `raw-execute` followed by `get-data-reaction`; both update the same slot.
+
+On an `:sse` endpoint `execute` opens the stream instead and returns the subscription handle,
+which derefs the same way — `(:data @x)` is the latest frame. Because a stream has to be
+closed, the component shape that fits both cases is `r/with-let` with a `finally`:
+
+```clojure
+(defn account-live []
+  (r/with-let [live (http-api/execute :account :changes)]   ; opens once, here
+    [:div (:name (:data @live))
+     (when-not (:connected? @live) [:span "reconnecting…"])]
+    (finally (http-api/unsubscribe! live))))                ; no-op for a plain request
+```
+
+The SSE handle derefs to `{:sse? true :connected? bool :data <latest frame> :message-count n
+:error <message or nil>}`; `unsubscribe!` on anything that isn't a subscription is a no-op,
+so the `finally` line is the same whichever method the endpoint has.
 
 Attach a bearer token to every request automatically, once at boot:
 
@@ -71,18 +110,19 @@ to also serve `Accept: text/event-stream`; nothing about `:get` has to change.
 | Function | Description |
 | --- | --- |
 | `(defapi api-name options endpoints-spec)` | Declares one named REST/SSE API. `options` is `{:base-url "..."}`. `endpoints-spec` is `endpoint-name -> spec` — see below. |
-| `(execute api-name endpoint-name opts?)` | Fires one request, returns a channel with `{:success? bool :data ...}`. `opts`: `:path-params` (fills `:param` in the URI), `:params` (query/body), `:headers` (overrides the auto-injected token for that call). The reaction/re-frame slot keeps the last successful `:data` across failures — a failed call sets `:success? false` and puts the failure under `:error` there. |
-| `(subscribe api-name endpoint-name opts)` | Opens a live subscription against an `:sse` endpoint, returns an opaque handle. `opts`: `:path-params`, `:params`, `:on-open` (0-arg, every reconnect including the first — see Gotchas), `:on-message` (1-arg, parsed frame data), `:on-error` (1-arg, message string), `:events` (extra named SSE event types delivered to `:on-message`, default `["changed"]` — unnamed frames always arrive). |
-| `(unsubscribe! handle)` | Closes the connection, cancels any pending reconnect. Safe on an already-closed handle. |
+| `(execute api-name endpoint-name opts?)` | Request endpoint: fires it, returns the endpoint's reaction (`raw-execute` + `get-data-reaction`), `opts` as for `raw-execute`. `:sse` endpoint: opens the stream, returns the subscription handle, `opts` as for `subscribe`. Either way `(:data @x)` is the latest body/frame — deref it in a component. |
+| `(raw-execute api-name endpoint-name opts?)` | Fires one request, returns a channel with `{:success? bool :data ...}`. `opts`: `:path-params` (fills `:param` in the URI), `:params` (query/body), `:headers` (overrides the auto-injected token for that call). The reaction/re-frame slot keeps the last successful `:data` across failures — a failed call sets `:success? false` and puts the failure under `:error` there. |
+| `(subscribe api-name endpoint-name opts)` | Opens a live subscription against an `:sse` endpoint, returns a handle that derefs to `{:sse? true :connected? bool :data <latest frame> :message-count n :error msg-or-nil}`. `opts`: `:path-params`, `:params`, `:on-open` (0-arg, every reconnect including the first — see Gotchas), `:on-message` (1-arg, parsed frame data), `:on-error` (1-arg, message string), `:events` (extra named SSE event types delivered to `:on-message`, default `["changed"]` — unnamed frames always arrive). |
+| `(unsubscribe! handle)` | Closes the connection, cancels any pending reconnect. Safe on an already-closed handle; a no-op on anything that isn't a subscription (a plain-request reaction, `nil`), so a component can pass whatever `execute` returned. |
 | `(set-auth-token-provider! f)` | Registers a 0-arg fn returning the bearer token (or `nil`), injected into every request lacking an explicit `:authorization` header, rebuilt fresh on every retry. |
 | `(set-token-stale-handler! f)` | Registers a 0-arg fn returning a channel, called when a 401 carries `{:reason "token-stale"}`. Retried exactly once after the handler's channel closes; concurrent stale requests share one reload. No handler registered ⇒ the 401 passes through unchanged. |
-| `(init)` | Wires re-frame integration: every response/SSE update mirrors into `[:_http-api :data]` in the app-db. Optional — `execute`/`subscribe`/`get-data-reaction` work without it. |
-| `(get-data-reaction api-name endpoint-name)` | Reagent reaction over an endpoint's latest value: `@(http-api/get-data-reaction :account :get)`. Throws if the endpoint was never declared. |
+| `(init)` | Wires re-frame integration: every response/SSE update mirrors into `[:_http-api :data]` in the app-db. Optional — `execute`/`raw-execute`/`subscribe`/`get-data-reaction` work without it. |
+| `(get-data-reaction api-name endpoint-name)` | Reagent reaction over an endpoint's stored slot, without firing anything: `@(http-api/get-data-reaction :account :get)`. `nil` before the first response. Throws if the endpoint was never declared. |
 
 `endpoints-spec` per-endpoint keys:
 
 - `:method` — `:get`, `:post`, `:put`, `:patch`, `:delete`, or `:sse` (opened with
-  `subscribe`, never `execute`; `:request-format`/`:response-format`/`:timeout` don't apply).
+  `subscribe` or `execute`, never `raw-execute`; `:request-format`/`:response-format`/`:timeout` don't apply).
 - `:uri` — path, may contain `:param` placeholders (`"/api/leaves/:id"`); substituted
   values are percent-encoded.
 - `:with-credentials` — `true` to send cookies on cross-origin requests.
@@ -113,7 +153,7 @@ Declaring an API mixing GET, POST and SSE:
                   :request-format :json :response-format :json}}))
 ```
 
-`execute`, in a go block, success/failure handled explicitly:
+`raw-execute`, in a go block, success/failure handled explicitly:
 
 ```clojure
 (ns myapp.feature.account.event
@@ -126,7 +166,7 @@ Declaring an API mixing GET, POST and SSE:
   ([] (load-account! nil))
   ([on-done]
    (a/go
-     (let [res (a/<! (http-api/execute :account :get))]
+     (let [res (a/<! (http-api/raw-execute :account :get))]
        (if (:success? res)
          (let [account (response/payload res)]
            (rf/dispatch [:account/set account])
@@ -178,11 +218,13 @@ message out of the cljs-ajax error map on failure.
   between the `execute` snapshot and the stream. Loading dependent data (`load-ledger!`
   above) from `:on-open` rather than once on mount is what keeps it correct across a
   reconnect.
-- **Always pair `subscribe` with `unsubscribe!` in `component-will-unmount`** — a subscription
-  that outlives its component leaks a connection and a pending reconnect timer.
+- **Always pair `subscribe` (or `execute` on an `:sse` endpoint) with `unsubscribe!`** in
+  `component-will-unmount` / `with-let`'s `finally` — a subscription that outlives its
+  component leaks a connection and a pending reconnect timer.
 - **A stale token retries at most once**, and concurrent stale requests share that one
   reload. With no `set-token-stale-handler!` registered, the 401 just reaches your callback
   like any other failure.
-- **`execute` on an `:sse` endpoint (and `subscribe` on anything else) throws immediately**,
+- **`raw-execute` on an `:sse` endpoint (and `subscribe` on anything else) throws
+  immediately**,
   naming the mismatch, rather than failing somewhere inside the transport.
 - **`:headers` on a call overrides the auto-injected `:authorization`**, not merges under it.

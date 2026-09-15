@@ -7,6 +7,18 @@ released at the same version number.
 
 ## [Unreleased]
 
+### Changed
+
+- **http-api:** `execute` now fires the request and returns the endpoint's reaction
+  (`raw-execute` + `get-data-reaction`), so a component can `(let [x (execute :api :ep)] ...)`
+  and deref `x` in its render fn. The previous channel-returning `execute` is renamed
+  `raw-execute` — replace `(a/<! (execute ...))` with `(a/<! (raw-execute ...))`.
+- **http-api:** `execute` on an `:sse` endpoint opens the stream (as `subscribe`) and returns
+  the subscription handle; that handle now derefs to the stream's latest state, whose latest
+  frame also lands under `:data` (alongside `:last-message`), so `(:data @x)` reads the same
+  for a request and a stream. `unsubscribe!` is a no-op on anything that isn't a
+  subscription, so a `with-let` `finally` can close whatever `execute` returned.
+
 ## [0.2.0] - 2026-09-05
 
 ### Fixed

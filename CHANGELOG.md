@@ -7,6 +7,8 @@ released at the same version number.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-16
+
 ### Added
 
 - **form:** `bangmod.form.core/create-form-submission` — a macro that builds the
@@ -96,7 +98,8 @@ released at the same version number.
 - Initial extraction of `reagent-form`, `reagent-http-api` and `reagent-router`
   into a three-module repo.
 
-[Unreleased]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/bangmodcloud/reagent-toolkit/releases/tag/v0.1.0

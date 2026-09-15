@@ -6,14 +6,14 @@ description: Use when writing ClojureScript code against the reagent-toolkit lib
 # reagent-toolkit (bangmod.form / bangmod.http-api / bangmod.router)
 
 Three independent ClojureScript libraries for Reagent/re-frame apps. This skill targets
-**0.3.0**. Docs live in `docs/{form,http-api,router}.md` of
+**0.4.0**. Docs live in `docs/{form,http-api,router}.md` of
 https://github.com/bangmodcloud/reagent-toolkit — trust this skill for signatures; read the
 source under `modules/*/src/bangmod/` only when something here doesn't cover it.
 
 ```clojure
-{:deps {io.github.bangmodcloud/reagent-form     {:mvn/version "0.3.0"}
-        io.github.bangmodcloud/reagent-http-api {:mvn/version "0.3.0"}
-        io.github.bangmodcloud/reagent-router   {:mvn/version "0.3.0"}}}
+{:deps {io.github.bangmodcloud/reagent-form     {:mvn/version "0.4.0"}
+        io.github.bangmodcloud/reagent-http-api {:mvn/version "0.4.0"}
+        io.github.bangmodcloud/reagent-router   {:mvn/version "0.4.0"}}}
 ```
 
 They do not depend on each other — add only what the task needs.

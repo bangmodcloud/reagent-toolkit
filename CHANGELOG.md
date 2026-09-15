@@ -7,6 +7,17 @@ released at the same version number.
 
 ## [Unreleased]
 
+### Changed
+
+- **form:** docs and the Claude skill now present `bangmod.form.api` (form as first
+  argument) as the primary way to call a form; `make-api` is documented as the convenience
+  wrapper it is.
+
+### Fixed
+
+- **form:** `bangmod.form.core/get-form` now exists — the docs already referred to it, but
+  it was only reachable as `bangmod.form.form/get-form`.
+
 ## [0.3.0] - 2026-09-15
 
 ### Changed

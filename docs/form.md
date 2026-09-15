@@ -18,7 +18,7 @@ straight onto the input, and `handle-submit` is the entire submission pipeline
 (validate everything → collect values → call your function → track submitting/error state):
 
 ```clojure
-[:input (register-field :email {:type "email" :validators [required]})]
+[:input (api/register-field login-form :email {:type "email" :validators [required]})]
 ```
 
 That line is a working, validated, controlled field. The [quick start](#quick-start) below
@@ -55,6 +55,7 @@ See the [root README](../README.md#installation) for `deps.edn` / git-dependency
 ```clojure
 (ns myapp.feature.authentication.view
   (:require [bangmod.form.core :as form]
+            [bangmod.form.api :as api]
             [clojure.string :as str]))
 
 (defn required [value]
@@ -63,69 +64,74 @@ See the [root README](../README.md#installation) for `deps.edn` / git-dependency
 
 (defn login-form-card []
   (let [login-form (form/create-form :login)
-        {:keys [register-field handle-submit get-field-display-error get-is-submitting]}
-        (form/make-api login-form)
-        on-submit (fn [{:keys [email password]}]
-                    (js/console.log "submit:" email password)
-                    (form/create-success-submission-result))]
+        on-submit  (fn [{:keys [email password]}]
+                     (js/console.log "submit:" email password)
+                     (form/create-success-submission-result))]
     (fn []
-      [:form {:on-submit (handle-submit on-submit)}
+      [:form {:on-submit (api/handle-submit login-form on-submit)}
        [:div.form-group
         [:label {:for "email"} "Email"]
-        [:input.input (register-field :email {:id "email" :type "email"
-                                               :validators [required]})]
-        (when-let [err (get-field-display-error :email)] [:p.error-text err])]
+        [:input.input (api/register-field login-form :email {:id "email" :type "email"
+                                                              :validators [required]})]
+        (when-let [err (api/get-field-display-error login-form :email)] [:p.error-text err])]
 
        [:div.form-group
         [:label {:for "password"} "Password"]
-        [:input.input (register-field :password {:id "password" :type "password"
-                                                  :validators [required]})]
-        (when-let [err (get-field-display-error :password)] [:p.error-text err])]
+        [:input.input (api/register-field login-form :password {:id "password" :type "password"
+                                                                 :validators [required]})]
+        (when-let [err (api/get-field-display-error login-form :password)] [:p.error-text err])]
 
-       [:button.btn.btn-primary {:type "submit" :disabled (get-is-submitting)}
-        (if (get-is-submitting) "Submitting..." "Log in")]])))
+       [:button.btn.btn-primary {:type "submit" :disabled (api/get-is-submitting login-form)}
+        (if (api/get-is-submitting login-form) "Submitting..." "Log in")]])))
 ```
 
 `(form/create-form :login)` registers the form under `:login` globally (`form/get-form
 :login` retrieves it elsewhere), which is why it only needs calling once, outside render.
+Everything else is a function in `bangmod.form.api` that takes the form as its first
+argument.
 
 ## API reference
 
-There are two ways to call this API on a form. `(form/make-api form)` returns a map of the
-12 functions listed below, already bound to `form` — destructure it once and spread the
-result through your component, as in the quick start. Or skip `make-api` and call the
-protocol functions in `bangmod.form.api` directly, passing `form` as the first argument
-yourself: `(api/register-field form field-name field-config)`. Both operate on the same
-`ReagentForm` instance, so mixing them on one form is fine — `make-api` is just a
-convenience layer over `bangmod.form.api`'s `IForm` protocol, not a different API. Reach for
-the direct form when you need one of the few `IForm` functions `make-api` doesn't expose —
-see below.
+Two namespaces. `bangmod.form.core` creates forms and holds the nested-form components;
+`bangmod.form.api` is everything you do *with* a form — the `IForm` protocol, every function
+taking the form as its first argument: `(api/register-field form :email {...})`.
 
 `bangmod.form.core`:
 
 | Function / component | Description |
 | --- | --- |
 | `(create-form form-id)` / `(create-form form-id {:keys [initial-values]})` | Creates and registers a form under `form-id`. `initial-values` is a map of `field-name -> value` (or anything derefable holding one — reagent atom/reaction/cursor, plain atom), used before a field is touched. |
-| `(make-api form)` | Returns the bound functions below as a map, meant to be destructured once. Throws if `form` isn't a `ReagentForm`. |
+| `(get-form form-id)` | The form registered under `form-id`, from anywhere. Throws if there is none. |
 | `(create-success-submission-result)` / `(create-failed-submission-result msg)` | The two values an `on-submit` fn (passed to `handle-submit`) must produce, directly or via a `core.async` channel. |
 | `FieldArray`, `FieldGroup` | Components for repeating/nested field groups — see below. |
+| `(make-api form)` | Convenience: a map of the `bangmod.form.api` functions below, pre-bound to `form`, for destructuring once — see [`make-api`](#make-api-the-pre-bound-map). |
 
-Bound functions returned by `make-api`:
+`bangmod.form.api` — `form` is always the first argument:
 
 | Function | Description |
 | --- | --- |
-| `register-field field-name field-config` | Registers a field, returns input props: `:value`, `:on-change`, `:on-blur`, `:on-focus`, `:id`, `:type`, `:placeholder`, plus anything else from `field-config`. See below for `field-config`. |
-| `deregister-fields field-name-or-list` | Removes one field (keyword) or several (collection) from form state. |
-| `get-field-display-value field-name` | Current value, falling back to initial value then `:default-value`. |
-| `get-field-display-error field-name` | Current error, or `nil` if the field hasn't been touched. |
-| `get-raw-field-value field-name` | Current value with no fallback. |
-| `change-field-value field-name value` | Sets a value, marks touched, validates. What the default `:on-change` calls. |
-| `validate-field field-name` | Re-runs validators against the current value. |
-| `touch field-name` | Marks touched (so its error becomes visible) and validates, without changing value. |
-| `get-all-fields-errors` | `({:field name :error err} ...)` for every field currently in error. |
-| `get-is-submitting` | `true` while a submission is in flight. |
-| `get-form-display-error` | Form-level error from `create-failed-submission-result` (or from an `on-submit` that threw). `nil` while submitting. |
-| `handle-submit on-submit-fn` | Returns an `:on-submit` handler — see below. |
+| `(register-field form field-name field-config)` | Registers a field, returns input props: `:value`, `:on-change`, `:on-blur`, `:on-focus`, `:id`, `:type`, `:placeholder`, plus anything else from `field-config`. See below for `field-config`. |
+| `(deregister-fields form field-name-or-list)` | Removes one field (keyword) or several (collection) from form state. |
+| `(get-field-display-value form field-name)` | Current value, falling back to initial value then `:default-value`. |
+| `(get-field-display-error form field-name)` | Current error, or `nil` if the field hasn't been touched. |
+| `(get-raw-field-value form field-name)` | Current value with no fallback. |
+| `(change-field-value form field-name value)` | Sets a value, marks touched, validates. What the default `:on-change` calls. |
+| `(validate-field form field-name)` | Re-runs validators against the current value. |
+| `(touch form field-name)` | Marks touched (so its error becomes visible) and validates, without changing value. |
+| `(get-all-fields-errors form)` | `({:field name :error err} ...)` for every field currently in error. |
+| `(get-form-values form)` | A plain map of every field's current raw value — the same shape `handle-submit` passes to `on-submit-fn`, available any time, not just at submit. |
+| `(validate-all-fields form)` | Touches and validates every field, returns the first error found (or `nil`). The same check `handle-submit` runs, without submitting — a "can I move to the next wizard step" check. |
+| `(get-initial-values form)` | The form's `:initial-values`, as given to `create-form`. |
+| `(get-is-submitting form)` | `true` while a submission is in flight. |
+| `(get-form-display-error form)` | Form-level error from `create-failed-submission-result` (or from an `on-submit` that threw). `nil` while submitting. |
+| `(handle-submit form on-submit-fn)` | Returns an `:on-submit` handler — see below. |
+
+(The protocol's remaining three — `-init-form`, `make-field-subscription`,
+`handle-form-submission-result` — are what the form calls on itself; nothing to call.)
+
+Every getter that reads state (`get-field-display-value`, `get-field-display-error`,
+`get-form-display-error`, ...) returns the value, not a reaction, and reading it inside a
+render registers the reactive dependency — call it where you use it.
 
 `field-config` keys for `register-field`:
 
@@ -135,32 +141,23 @@ Bound functions returned by `make-api`:
   default; passed through only if you provide one.
 - `:on-change` / `:on-blur` / `:on-focus` — override the generated handler.
 
-### Calling `bangmod.form.api` directly
+### `make-api`: the pre-bound map
 
-`bangmod.form.api` defines the full `IForm` protocol `make-api` wraps — every function
-above, plus a few `make-api` leaves out because they're rarely what a component needs:
-
-| Function | Description |
-| --- | --- |
-| `(api/get-form-values form)` | A plain map of every field's current raw value — the same shape `handle-submit` passes to `on-submit-fn`, available any time, not just at submit. |
-| `(api/validate-all-fields form)` | Touches and validates every field, returns the first error found (or `nil`). Runs the same check `handle-submit` runs, without submitting — useful for a "can I move to the next wizard step" check. |
-| `(api/get-initial-values form)` | The form's `:initial-values`, as given to `create-form`. |
-
-Same call shape either way — `form` first, then whatever the function normally takes:
+When one component makes many calls against one form, `(form/make-api form)` saves
+repeating the form argument: it returns a map of the `bangmod.form.api` functions above with
+`form` already bound, meant to be destructured once.
 
 ```clojure
-(require '[bangmod.form.api :as api])
-
-(api/register-field login-form :email {:validators [v/required]})
-(api/get-form-values login-form)
-;; => {:email "a@b.com" :password "secret"}
+(let [{:keys [register-field handle-submit get-field-display-error]} (form/make-api login-form)]
+  [:form {:on-submit (handle-submit on-submit)}
+   [:input (register-field :email {:validators [v/required]})]
+   (when-let [err (get-field-display-error :email)] [:span.error err])])
 ```
 
-This isn't a theoretical escape hatch — `FieldArray` and `FieldGroup` (below) are themselves
-built this way: they hold a `form` value with no component of their own bound to it via
-`make-api`, and call `api/register-field`, `api/change-field-value`, `api/get-form-values`
-and `api/validate-all-fields` on it directly, because a nested/repeated form's own validator
-needs `validate-all-fields`, which `make-api` doesn't expose.
+It is only a convenience layer over `bangmod.form.api` — both operate on the same
+`ReagentForm`, so mixing them on one form is fine. Three functions are *not* in the map
+(`get-form-values`, `validate-all-fields`, `get-initial-values`); call those through
+`bangmod.form.api`. It throws if `form` isn't a `ReagentForm`.
 
 ### Writing a validator
 
@@ -175,7 +172,7 @@ a string) or `nil` out. Validators run in order; the first to return an error wi
 
 ### Submitting
 
-`(handle-submit on-submit-fn)` returns a fn for `:on-submit`. It calls `.preventDefault`,
+`(api/handle-submit form on-submit-fn)` returns a fn for `:on-submit`. It calls `.preventDefault`,
 touches and validates every field, and — only if none now has an error — marks the form
 submitting and calls `(on-submit-fn field-values)` with a plain map of every field's raw
 value (destructure directly: `(fn [{:keys [email password]}] ...)`). If any field has an
@@ -193,18 +190,17 @@ submitting state.
 single nested sub-form. Both take `:form` (a form, or a form-id keyword) and `:name` (the
 field name they register under on the parent), plus a render prop.
 
-**`FieldGroup`** — render prop receives the nested form to build a `make-api` from, same as
-any other form:
+**`FieldGroup`** — render prop receives the nested form; register fields on it like any
+other form:
 
 ```clojure
 [form/FieldGroup {:form parent-form :name :billing-address}
  (fn [nested-form]
-   (let [{:keys [register-field get-field-display-error]} (form/make-api nested-form)]
-     [:div.address-group
-      [:div.form-group
-       [:label "Street"]
-       [:input (register-field :street {:validators [v/required]})]
-       (when-let [err (get-field-display-error :street)] [:span.error err])]]))]
+   [:div.address-group
+    [:div.form-group
+     [:label "Street"]
+     [:input (api/register-field nested-form :street {:validators [v/required]})]
+     (when-let [err (api/get-field-display-error nested-form :street)] [:span.error err])]])]
 ```
 
 **`FieldArray`** — render prop receives `(add-fn remove-fn forms)`: call `add-fn` (optionally
@@ -218,13 +214,12 @@ render `forms` (a vector of sub-forms) yourself:
     (doall
      (map-indexed
       (fn [idx item-form]
-        (let [{:keys [register-field get-field-display-error]} (form/make-api item-form)]
-          ^{:key idx}
-          [:div.item-row
-           [:input (register-field :title {:placeholder "Item title"})]
-           [:input (register-field :qty {:type "number" :validators [v/required]})]
-           [:button {:type "button" :on-click #(remove-fn idx)} "Remove"]
-           (when-let [err (get-field-display-error :qty)] [:span.error err])]))
+        ^{:key idx}
+        [:div.item-row
+         [:input (api/register-field item-form :title {:placeholder "Item title"})]
+         [:input (api/register-field item-form :qty {:type "number" :validators [v/required]})]
+         [:button {:type "button" :on-click #(remove-fn idx)} "Remove"]
+         (when-let [err (api/get-field-display-error item-form :qty)] [:span.error err])])
       item-forms))
     [:button {:type "button" :on-click #(add-fn {:qty 1})} "+ Add item"]])]
 ```
@@ -239,9 +234,9 @@ not for a control (a date picker, a `react-select`) that hands `:on-change` some
 Override it and write straight to form state with `change-field-value`:
 
 ```clojure
-[date-picker (register-field :start-date
+[date-picker (api/register-field form :start-date
                {:validators [v/required]
-                :on-change  #(change-field-value :start-date %)})]
+                :on-change  #(api/change-field-value form :start-date %)})]
 ```
 
 ## Real-world example
@@ -258,13 +253,12 @@ in [`reagent-router`'s docs](router.md#navigation-and-url-generation) — this i
             [clojure.string :as str]
             [bangmod.router.core :as router]
             [bangmod.form.core :as form]
+            [bangmod.form.api :as api]
             [myapp.feature.authentication.event :as auth]
             [myapp.validators :as v]))
 
 (defn- login-form-card [login-form]
-  (let [{:keys [register-field handle-submit get-field-display-error]}
-        (form/make-api login-form)
-        api-err @(rf/subscribe [:auth/error])
+  (let [api-err @(rf/subscribe [:auth/error])
         loading? @(rf/subscribe [:auth/loading?])
         on-submit (fn [{:keys [email password]}]
                     (auth/login! (str/lower-case (str/trim (str email)))
@@ -278,20 +272,22 @@ in [`reagent-router`'s docs](router.md#navigation-and-url-generation) — this i
           (str/includes? api-err "credentials") "Invalid email or password."
           :else api-err)])
 
-     [:form {:on-submit (handle-submit on-submit)}
+     [:form {:on-submit (api/handle-submit login-form on-submit)}
       [:div.form-group
        [:label {:for "login-email"} "Email"]
-       [:input.input (register-field :email {:id "login-email" :type "email"
-                                             :validators [v/required]
-                                             :class (when (get-field-display-error :email) "input-error")})]
-       (when-let [err (get-field-display-error :email)] [:p.error-text err])]
+       [:input.input (api/register-field login-form :email
+                       {:id "login-email" :type "email"
+                        :validators [v/required]
+                        :class (when (api/get-field-display-error login-form :email) "input-error")})]
+       (when-let [err (api/get-field-display-error login-form :email)] [:p.error-text err])]
 
       [:div.form-group
        [:label {:for "login-password"} "Password"]
-       [:input.input (register-field :password {:id "login-password" :type "password"
-                                                 :validators [v/required]
-                                                 :class (when (get-field-display-error :password) "input-error")})]
-       (when-let [err (get-field-display-error :password)] [:p.error-text err])]
+       [:input.input (api/register-field login-form :password
+                       {:id "login-password" :type "password"
+                        :validators [v/required]
+                        :class (when (api/get-field-display-error login-form :password) "input-error")})]
+       (when-let [err (api/get-field-display-error login-form :password)] [:p.error-text err])]
 
       [:button.btn.btn-primary {:type "submit" :disabled loading?}
        (if loading? "Logging in..." "Log in")]]]))

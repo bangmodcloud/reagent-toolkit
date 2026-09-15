@@ -1,6 +1,6 @@
 ---
 name: bmc-reagent-toolkit
-description: Use when writing ClojureScript code against the reagent-toolkit libraries — bangmod.form (forms/validation), bangmod.http-api (declarative HTTP + SSE), bangmod.router (bidi/pushy routing for re-frame SPAs). Covers the exact APIs, the route-table grammar, the two ways to call the form API, the SSE server contract, and sharp edges.
+description: Use when writing ClojureScript code against the reagent-toolkit libraries — bangmod.form (forms/validation), bangmod.http-api (declarative HTTP + SSE), bangmod.router (bidi/pushy routing for re-frame SPAs). Covers the exact APIs, the route-table grammar, the bangmod.form.api call shape, the SSE server contract, and sharp edges.
 ---
 
 # reagent-toolkit (bangmod.form / bangmod.http-api / bangmod.router)
@@ -166,7 +166,8 @@ snapshot and stream):
 
 ```clojure
 (ns myapp.views.login
-  (:require [bangmod.form.core :as form]))
+  (:require [bangmod.form.core :as form]     ; create-form, submission results, FieldArray/FieldGroup
+            [bangmod.form.api  :as api]))    ; everything you do WITH a form — form is arg 1
 ```
 
 Create outside render; the form is registered globally under its id:
@@ -174,20 +175,25 @@ Create outside render; the form is registered globally under its id:
 - `(form/create-form :login)` / `(form/create-form :login {:initial-values {...}})` —
   `:initial-values` is a map or anything derefable holding one. Re-creating with the same id
   silently replaces the registry entry (`form/get-form` follows the newest).
-- `(form/make-api form)` — destructure once; returns bound fns:
-  `:register-field :handle-submit :get-field-display-value :get-field-display-error
-  :get-raw-field-value :change-field-value :validate-field :touch :deregister-fields
-  :get-all-fields-errors :get-is-submitting :get-form-display-error`.
 - `(form/create-success-submission-result)` / `(form/create-failed-submission-result msg)` —
   what `on-submit` must return (directly, or via a core.async read port).
+
+`bangmod.form.api` (the `IForm` protocol) is THE way to call a form — PREFER it over
+`make-api`. Every fn takes the form first:
+`register-field deregister-fields get-field-display-value get-field-display-error
+get-raw-field-value change-field-value validate-field touch get-all-fields-errors
+get-form-values validate-all-fields get-initial-values get-is-submitting
+get-form-display-error handle-submit`. Getters return VALUES (not reactions) and register the
+reactive dependency when read inside a render — call them where you use them.
 
 ### Fields
 
 ```clojure
-[:input.input (register-field :email {:id "login-email" :type "email"
-                                      :validators [v/required]
-                                      :class (when (get-field-display-error :email) "input-error")})]
-(when-let [err (get-field-display-error :email)] [:p.error-text err])
+[:input.input (api/register-field login-form :email
+                {:id "login-email" :type "email"
+                 :validators [v/required]
+                 :class (when (api/get-field-display-error login-form :email) "input-error")})]
+(when-let [err (api/get-field-display-error login-form :email)] [:p.error-text err])
 ```
 
 `register-field` returns the complete controlled-input props (`:value :on-change :on-blur
@@ -198,33 +204,34 @@ and `:on-change`/`:on-blur`/`:on-focus` overrides.
 
 The generated `:on-change` reads `(.. e -target -value)` — for custom controls (date
 pickers, selects) that pass a raw value, override it:
-`:on-change #(change-field-value :start-date %)`.
+`:on-change #(api/change-field-value form :start-date %)`.
 
 ### Submitting
 
-`[:form {:on-submit (handle-submit on-submit)}]` — on submit it prevents default, touches +
+`[:form {:on-submit (api/handle-submit form on-submit)}]` — on submit it prevents default, touches +
 validates every field; if any field errors, `on-submit` is NOT called (errors are now
 visible). Otherwise `on-submit` receives the values map (`(fn [{:keys [email password]}]
 ...)`) and must return a submission result (or a channel of one). A throwing `on-submit`
 becomes a failed submission — the form never sticks in `:is-submitting`.
 `get-form-display-error` is `nil` while submitting; field errors are `nil` until touched.
 
-### Direct protocol calls (`bangmod.form.api`)
+Beyond submit: `(api/get-form-values form)` — all raw values as a map, any time;
+`(api/validate-all-fields form)` — touch + validate everything, return first error or nil
+(wizard-step checks); `(api/get-initial-values form)`.
 
-`make-api` is a convenience wrapper over the `IForm` protocol — every fn can also be called
-as `(api/register-field form :email {...})` with the form first. Three are ONLY available
-this way:
+### `make-api` (secondary)
 
-- `(api/get-form-values form)` — all raw values as a map, any time.
-- `(api/validate-all-fields form)` — touch + validate everything, return first error or nil
-  (wizard-step checks).
-- `(api/get-initial-values form)`.
+`(form/make-api form)` returns the `bangmod.form.api` fns pre-bound to `form` as a map
+(`{:keys [register-field handle-submit ...]}`), for a component making many calls on one
+form. Same `ReagentForm` underneath, mixing is fine. NOT in the map: `get-form-values`,
+`validate-all-fields`, `get-initial-values` — use `api/` for those. Default to `api/` in
+new code; don't introduce `make-api` unless the surrounding code already uses it.
 
 ### Nested forms
 
 ```clojure
 [form/FieldGroup {:form parent :name :billing-address}
- (fn [nested-form] ...build (form/make-api nested-form) and register fields...)]
+ (fn [nested-form] ...(api/register-field nested-form :street {...}) etc...)]
 
 [form/FieldArray {:form parent :name :items}          ; also :element-removal-strategy :both|:element-only
  (fn [add-fn remove-fn item-forms]

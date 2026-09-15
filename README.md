@@ -19,11 +19,10 @@ the gotchas worth knowing before you rely on it.
 
 ```clojure
 ;; form: register-field returns ready-to-spread input props
-(let [{:keys [register-field handle-submit get-field-display-error]}
-      (form/make-api (form/create-form :login))]
-  [:form {:on-submit (handle-submit on-submit-fn)}
-   [:input (register-field :email {:type "email" :validators [v/required]})]
-   (when-let [err (get-field-display-error :email)] [:span.error err])])
+(let [login (form/create-form :login)]
+  [:form {:on-submit (api/handle-submit login on-submit-fn)}
+   [:input (api/register-field login :email {:type "email" :validators [v/required]})]
+   (when-let [err (api/get-field-display-error login :email)] [:span.error err])])
 
 ;; http-api: a GET and a live SSE subscription can share one URI
 (defapi :account {:base-url "https://api.example.com"}

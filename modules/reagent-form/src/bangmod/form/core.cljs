@@ -11,6 +11,10 @@
   ([form-id options]
    (form/create-form form-id options)))
 
+(def get-form
+  "The form registered under `form-id`. Throws if there is none."
+  form/get-form)
+
 (defn make-api [form]
   (if (satisfies? api/IForm form)
     {:handle-submit #(api/handle-submit form %1)

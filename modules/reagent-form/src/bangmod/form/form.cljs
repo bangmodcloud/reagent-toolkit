@@ -138,31 +138,35 @@
                           (-> form
                               (assoc-in [:error] msg)
                               (assoc-in [:is-submitting] false))))))))
+  (start-submission [this]
+    ;; The gate every submit path goes through: touch everything so errors show, refuse
+    ;; while a submission is in flight or any field is in error, otherwise mark submitting
+    ;; and hand back the values. nil means "did not start".
+    (doseq [field-name (keys @a-fields)]
+      (api/touch this field-name))
+    (when-not (get-in @a-form [:is-submitting])
+      (let [has-field-error? (some (fn [[_ field-data]]
+                                     (some? (get-in field-data [:error])))
+                                   @a-fields)]
+        (when-not has-field-error?
+          (swap! a-form (fn [form]
+                          (-> form
+                              (assoc-in [:is-submitting] true)
+                              (assoc-in [:error] nil))))
+          (api/get-form-values this)))))
   (handle-submit [this on-submit-fn]
     (fn [event]
       (when event
         (.preventDefault event))
-      ;; touch all fields to validate
-      (doseq [field-name (keys @a-fields)]
-        (api/touch this field-name))
-      (when-not (get-in @a-form [:is-submitting])
-        (let [has-field-error? (some (fn [[_ field-data]]
-                                       (some? (get-in field-data [:error])))
-                                     @a-fields)]
-          (when-not has-field-error?
-            (swap! a-form (fn [form]
-                            (-> form
-                                (assoc-in [:is-submitting] true)
-                                (assoc-in [:error] nil))))
-            (let [values (api/get-form-values this)
-                  ;; A throwing on-submit is a failed submission, not a frozen form.
-                  result (try (on-submit-fn values)
-                              (catch :default e
-                                (js/console.error "on-submit threw:" e)
-                                [:failed (or (some-> e .-message) (str e))]))]
-              (if (satisfies? async-protocols/ReadPort result)
-                (async/go (api/handle-form-submission-result this (async/<! result)))
-                (api/handle-form-submission-result this result)))))))))
+      (when-let [values (api/start-submission this)]
+        ;; A throwing on-submit is a failed submission, not a frozen form.
+        (let [result (try (on-submit-fn values)
+                          (catch :default e
+                            (js/console.error "on-submit threw:" e)
+                            [:failed (or (some-> e .-message) (str e))]))]
+          (if (satisfies? async-protocols/ReadPort result)
+            (async/go (api/handle-form-submission-result this (async/<! result)))
+            (api/handle-form-submission-result this result)))))))
 
 (defonce ^:private forms (atom {}))
 

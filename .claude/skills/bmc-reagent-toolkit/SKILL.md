@@ -175,15 +175,16 @@ Create outside render; the form is registered globally under its id:
 - `(form/create-form :login)` / `(form/create-form :login {:initial-values {...}})` —
   `:initial-values` is a map or anything derefable holding one. Re-creating with the same id
   silently replaces the registry entry (`form/get-form` follows the newest).
-- `(form/create-success-submission-result)` / `(form/create-failed-submission-result msg)` —
-  what `on-submit` must return (directly, or via a core.async read port).
+- `(form/create-form-submission form [form values dispatch] body...)` — MACRO; builds the
+  `:on-submit` handler. See Submitting.
 
-`bangmod.form.api` (the `IForm` protocol) is THE way to call a form — PREFER it over
-`make-api`. Every fn takes the form first:
+`bangmod.form.api` (the `IForm` protocol) is THE way to call a form (there is no bound-map
+wrapper — 0.3.x's `make-api` is gone). Every fn takes the form first:
 `register-field deregister-fields get-field-display-value get-field-display-error
 get-raw-field-value change-field-value validate-field touch get-all-fields-errors
 get-form-values validate-all-fields get-initial-values get-is-submitting
-get-form-display-error handle-submit`. Getters return VALUES (not reactions) and register the
+get-form-display-error` (+ the lower-level `handle-submit` / `start-submission` /
+`handle-form-submission-result`). Getters return VALUES (not reactions) and register the
 reactive dependency when read inside a render — call them where you use them.
 
 ### Fields
@@ -208,24 +209,42 @@ pickers, selects) that pass a raw value, override it:
 
 ### Submitting
 
-`[:form {:on-submit (api/handle-submit form on-submit)}]` — on submit it prevents default, touches +
-validates every field; if any field errors, `on-submit` is NOT called (errors are now
-visible). Otherwise `on-submit` receives the values map (`(fn [{:keys [email password]}]
-...)`) and must return a submission result (or a channel of one). A throwing `on-submit`
-becomes a failed submission — the form never sticks in `:is-submitting`.
+```clojure
+(let [login-form (form/create-form :login)
+      on-submit  (form/create-form-submission login-form [_ {:keys [email password]} dispatch]
+                   (dispatch (-> (ch->promise (http-api/raw-execute :auth :login {:params {:email email :password password}}))
+                                 (.then (fn [{:keys [success? data]}]
+                                          (when-not success? (get-in data [:response :message] "Login failed")))))))]
+  (fn [] [:form {:on-submit on-submit} ...
+          (when-let [err (api/get-form-display-error login-form)] [:p.error-text err])]))
+```
+
+`create-form-submission` is a macro: `(form/create-form-submission form [form values dispatch]
+body...)` → the `:on-submit` handler. Binding vector is EXACTLY three names (each may
+destructure). On submit: preventDefault, touch + validate every field; if any field errors
+or a submission is in flight the body does NOT run. Otherwise the body runs once and MUST
+call `dispatch` exactly once with:
+- `nil` → success
+- a string → failure; becomes `get-form-display-error`
+- a promise resolving to either → form stays submitting until it settles
+
+Anything else is a programming error: form marked failed with the message AND the error is
+thrown — dispatch with any other value (incl. a `[:success]` vector), dispatch twice, never
+dispatching (unhandled submission), a rejected promise, a promise resolving to a non-outcome,
+or a throwing body. Every path through the body must end in one `dispatch`.
+
+core.async → promise bridge (define it in the app, 2 lines):
+`(defn ch->promise [ch] (js/Promise. (fn [resolve _] (a/take! ch resolve))))`.
+
 `get-form-display-error` is `nil` while submitting; field errors are `nil` until touched.
+Lower-level: `(api/handle-submit form (fn [values] ...))` where
+the fn returns `(form/create-success-submission-result)` /
+`(form/create-failed-submission-result msg)` or a channel of one — don't use it in new
+code.
 
 Beyond submit: `(api/get-form-values form)` — all raw values as a map, any time;
 `(api/validate-all-fields form)` — touch + validate everything, return first error or nil
 (wizard-step checks); `(api/get-initial-values form)`.
-
-### `make-api` (secondary)
-
-`(form/make-api form)` returns the `bangmod.form.api` fns pre-bound to `form` as a map
-(`{:keys [register-field handle-submit ...]}`), for a component making many calls on one
-form. Same `ReagentForm` underneath, mixing is fine. NOT in the map: `get-form-values`,
-`validate-all-fields`, `get-initial-values` — use `api/` for those. Default to `api/` in
-new code; don't introduce `make-api` unless the surrounding code already uses it.
 
 ### Nested forms
 

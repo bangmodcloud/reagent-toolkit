@@ -4,8 +4,8 @@
 
 Form state, validation and submission handling for Reagent. `register-field` hands back a
 ready-to-spread props map for an `[:input ...]` (value, change/blur/focus handlers, id, type
-— no event wiring of your own); `handle-submit` gates submission on every field validating
-first.
+— no event wiring of your own); `create-form-submission` gates submission on every field
+validating first and gives your code one `dispatch` to report how it went.
 
 ## Why reagent-form?
 
@@ -14,8 +14,8 @@ Two reasons, and they're the whole pitch.
 **A field is one expression.** No action types, no per-field event handlers, no schema DSL,
 nothing to register anywhere else. `register-field` returns the complete controlled-input
 wiring — value, `on-change`, `on-blur`, `on-focus`, id, type — as a props map you spread
-straight onto the input, and `handle-submit` is the entire submission pipeline
-(validate everything → collect values → call your function → track submitting/error state):
+straight onto the input, and `create-form-submission` is the entire submission pipeline
+(validate everything → collect values → run your body → track submitting/error state):
 
 ```clojure
 [:input (api/register-field login-form :email {:type "email" :validators [required]})]
@@ -52,43 +52,67 @@ See the [root README](../README.md#installation) for `deps.edn` / git-dependency
 
 ## Quick start
 
+A sign-up form: three validated fields, a cross-field check, and a request whose failure
+message becomes the form's error.
+
 ```clojure
-(ns myapp.feature.authentication.view
+(ns myapp.feature.signup.view
   (:require [bangmod.form.core :as form]
             [bangmod.form.api :as api]
+            [bangmod.http-api.core :as http-api]
+            [clojure.core.async :as a]
             [clojure.string :as str]))
 
 (defn required [value]
   (when (str/blank? (str value))
     "This field is required."))
 
-(defn login-form-card []
-  (let [login-form (form/create-form :login)
-        on-submit  (fn [{:keys [email password]}]
-                     (js/console.log "submit:" email password)
-                     (form/create-success-submission-result))]
+(defn ch->promise
+  "A core.async channel's first value, as a promise."
+  [ch]
+  (js/Promise. (fn [resolve _] (a/take! ch resolve))))
+
+(defn signup-form-card []
+  (let [signup-form (form/create-form :signup)
+        on-submit
+        (form/create-form-submission signup-form [_ {:keys [email password confirm-password]} dispatch]
+          (if (not= password confirm-password)
+            (dispatch "Passwords don't match.")
+            (dispatch (-> (ch->promise (http-api/raw-execute :auth :signup
+                                                             {:params {:email email :password password}}))
+                          (.then (fn [{:keys [success? data]}]
+                                   (when-not success?
+                                     (get-in data [:response :message] "Sign-up failed."))))))))]
     (fn []
-      [:form {:on-submit (api/handle-submit login-form on-submit)}
+      [:form {:on-submit on-submit}
        [:div.form-group
         [:label {:for "email"} "Email"]
-        [:input.input (api/register-field login-form :email {:id "email" :type "email"
-                                                              :validators [required]})]
-        (when-let [err (api/get-field-display-error login-form :email)] [:p.error-text err])]
+        [:input.input (api/register-field signup-form :email {:id "email" :type "email"
+                                                               :validators [required]})]
+        (when-let [err (api/get-field-display-error signup-form :email)] [:p.error-text err])]
 
        [:div.form-group
         [:label {:for "password"} "Password"]
-        [:input.input (api/register-field login-form :password {:id "password" :type "password"
-                                                                 :validators [required]})]
-        (when-let [err (api/get-field-display-error login-form :password)] [:p.error-text err])]
+        [:input.input (api/register-field signup-form :password {:id "password" :type "password"
+                                                                  :validators [required]})]
+        (when-let [err (api/get-field-display-error signup-form :password)] [:p.error-text err])]
 
-       [:button.btn.btn-primary {:type "submit" :disabled (api/get-is-submitting login-form)}
-        (if (api/get-is-submitting login-form) "Submitting..." "Log in")]])))
+       [:div.form-group
+        [:label {:for "confirm-password"} "Confirm password"]
+        [:input.input (api/register-field signup-form :confirm-password {:id "confirm-password" :type "password"
+                                                                          :validators [required]})]
+        (when-let [err (api/get-field-display-error signup-form :confirm-password)] [:p.error-text err])]
+
+       (when-let [err (api/get-form-display-error signup-form)] [:p.error-text err])
+
+       [:button.btn.btn-primary {:type "submit" :disabled (api/get-is-submitting signup-form)}
+        (if (api/get-is-submitting signup-form) "Creating account..." "Sign up")]])))
 ```
 
-`(form/create-form :login)` registers the form under `:login` globally (`form/get-form
-:login` retrieves it elsewhere), which is why it only needs calling once, outside render.
-Everything else is a function in `bangmod.form.api` that takes the form as its first
-argument.
+`(form/create-form :signup)` registers the form under `:signup` globally (`form/get-form
+:signup` retrieves it elsewhere), which is why it only needs calling once, outside render.
+`create-form-submission` builds the `:on-submit` handler once, next to it. Everything else
+is a function in `bangmod.form.api` that takes the form as its first argument.
 
 ## API reference
 
@@ -102,9 +126,9 @@ taking the form as its first argument: `(api/register-field form :email {...})`.
 | --- | --- |
 | `(create-form form-id)` / `(create-form form-id {:keys [initial-values]})` | Creates and registers a form under `form-id`. `initial-values` is a map of `field-name -> value` (or anything derefable holding one — reagent atom/reaction/cursor, plain atom), used before a field is touched. |
 | `(get-form form-id)` | The form registered under `form-id`, from anywhere. Throws if there is none. |
-| `(create-success-submission-result)` / `(create-failed-submission-result msg)` | The two values an `on-submit` fn (passed to `handle-submit`) must produce, directly or via a `core.async` channel. |
+| `(create-form-submission form [form values dispatch] body...)` | **Macro.** Builds the `:on-submit` handler: on a valid submit the body runs with the form, its values and a `dispatch` it must call exactly once — see [Submitting](#submitting). |
+| `(create-success-submission-result)` / `(create-failed-submission-result msg)` | The two values an `on-submit` fn given to the lower-level `api/handle-submit` must produce, directly or via a `core.async` channel. Not used with `create-form-submission`. |
 | `FieldArray`, `FieldGroup` | Components for repeating/nested field groups — see below. |
-| `(make-api form)` | Convenience: a map of the `bangmod.form.api` functions below, pre-bound to `form`, for destructuring once — see [`make-api`](#make-api-the-pre-bound-map). |
 
 `bangmod.form.api` — `form` is always the first argument:
 
@@ -119,12 +143,13 @@ taking the form as its first argument: `(api/register-field form :email {...})`.
 | `(validate-field form field-name)` | Re-runs validators against the current value. |
 | `(touch form field-name)` | Marks touched (so its error becomes visible) and validates, without changing value. |
 | `(get-all-fields-errors form)` | `({:field name :error err} ...)` for every field currently in error. |
-| `(get-form-values form)` | A plain map of every field's current raw value — the same shape `handle-submit` passes to `on-submit-fn`, available any time, not just at submit. |
-| `(validate-all-fields form)` | Touches and validates every field, returns the first error found (or `nil`). The same check `handle-submit` runs, without submitting — a "can I move to the next wizard step" check. |
+| `(get-form-values form)` | A plain map of every field's current raw value — the same map a submission body receives as `values`, available any time, not just at submit. |
+| `(validate-all-fields form)` | Touches and validates every field, returns the first error found (or `nil`). The same check a submit runs, without submitting — a "can I move to the next wizard step" check. |
 | `(get-initial-values form)` | The form's `:initial-values`, as given to `create-form`. |
 | `(get-is-submitting form)` | `true` while a submission is in flight. |
 | `(get-form-display-error form)` | Form-level error from `create-failed-submission-result` (or from an `on-submit` that threw). `nil` while submitting. |
-| `(handle-submit form on-submit-fn)` | Returns an `:on-submit` handler — see below. |
+| `(handle-submit form on-submit-fn)` | The lower-level submit handler `create-form-submission` supersedes: returns an `:on-submit` handler that calls `(on-submit-fn values)` and expects a submission result (or a core.async read port of one) back. |
+| `(start-submission form)` | The gate both submit paths go through: touches every field, then — unless a submission is in flight or a field is in error — marks the form submitting and returns the values map. `nil` when it refused. Pair with `handle-form-submission-result` (`[:success]` / `[:failed msg]`) only if you are building your own submit handler. |
 
 (The protocol's remaining three — `-init-form`, `make-field-subscription`,
 `handle-form-submission-result` — are what the form calls on itself; nothing to call.)
@@ -141,24 +166,6 @@ render registers the reactive dependency — call it where you use it.
   default; passed through only if you provide one.
 - `:on-change` / `:on-blur` / `:on-focus` — override the generated handler.
 
-### `make-api`: the pre-bound map
-
-When one component makes many calls against one form, `(form/make-api form)` saves
-repeating the form argument: it returns a map of the `bangmod.form.api` functions above with
-`form` already bound, meant to be destructured once.
-
-```clojure
-(let [{:keys [register-field handle-submit get-field-display-error]} (form/make-api login-form)]
-  [:form {:on-submit (handle-submit on-submit)}
-   [:input (register-field :email {:validators [v/required]})]
-   (when-let [err (get-field-display-error :email)] [:span.error err])])
-```
-
-It is only a convenience layer over `bangmod.form.api` — both operate on the same
-`ReagentForm`, so mixing them on one form is fine. Three functions are *not* in the map
-(`get-form-values`, `validate-all-fields`, `get-initial-values`); call those through
-`bangmod.form.api`. It throws if `form` isn't a `ReagentForm`.
-
 ### Writing a validator
 
 A validator is a 1-arg function: the field's raw value in, an error (truthy, conventionally
@@ -172,17 +179,58 @@ a string) or `nil` out. Validators run in order; the first to return an error wi
 
 ### Submitting
 
-`(api/handle-submit form on-submit-fn)` returns a fn for `:on-submit`. It calls `.preventDefault`,
-touches and validates every field, and — only if none now has an error — marks the form
-submitting and calls `(on-submit-fn field-values)` with a plain map of every field's raw
-value (destructure directly: `(fn [{:keys [email password]}] ...)`). If any field has an
-error, `on-submit-fn` is never called; the errors are already visible since every field was
-just touched. `on-submit-fn`'s return value — directly, or eventually via any
-core.async read port — must be `(create-success-submission-result)` or
-`(create-failed-submission-result msg)`; either way this clears `get-is-submitting` and, on
-failure, sets `get-form-display-error` to `msg`. An `on-submit-fn` that throws (or returns
-something else entirely) is treated as a failed submission — the form never sticks in a
-submitting state.
+```clojure
+(form/create-form-submission form [form values dispatch]
+  body...)
+```
+
+A macro that reads like a `fn` with the form in front, and returns the handler to put on
+`:on-submit`. The binding vector is exactly three names — the form, the values map, and
+`dispatch` — and each may destructure (`[_ {:keys [email password]} dispatch]` is the usual
+shape).
+
+On submit it calls `.preventDefault`, touches and validates every field, and — only if none
+now has an error and no submission is already in flight — marks the form submitting and
+runs the body once. If any field has an error the body never runs; the errors are already
+visible since every field was just touched.
+
+The body reports the outcome by calling `dispatch` **exactly once** with one of:
+
+| `dispatch` argument | Meaning |
+| --- | --- |
+| `nil` | Success. `get-is-submitting` clears, `get-form-display-error` is `nil`. |
+| a string | Failure. `get-is-submitting` clears, `get-form-display-error` becomes the string. |
+| a promise | Resolves to either of the above; the form stays submitting until it settles. |
+
+```clojure
+(dispatch nil)                                   ; done
+(dispatch "Passwords don't match.")              ; sync failure
+(dispatch (-> (ch->promise (http-api/raw-execute :auth :login {:params values}))
+              (.then (fn [{:keys [success? data]}]
+                       (when-not success? (get-in data [:response :message]))))))
+```
+
+Mapping a response to `nil`-or-message is the whole integration: a promise's `.then` that
+returns `nil` on success and the error string otherwise. For a core.async channel, a
+two-line `ch->promise` (see the quick start) is all the bridge you need.
+
+Everything else is a programming error, and is treated as one — the form is marked failed
+with the error's message (so it never sticks in a submitting state) **and the error is
+thrown**:
+
+- `dispatch` called with anything but `nil`, a string or a promise
+- `dispatch` called more than once
+- the body returns without ever calling `dispatch` — the submission is unhandled
+- the promise rejects, or resolves to anything but `nil` or a string (these surface as a
+  rejected promise, i.e. an "Uncaught (in promise)" in the console)
+- the body itself throws
+
+The lower-level `(api/handle-submit form on-submit-fn)` still exists: `on-submit-fn` gets
+the values map and must return
+`(create-success-submission-result)` / `(create-failed-submission-result msg)`, directly or
+via a core.async read port; a throwing `on-submit-fn` becomes a failed submission. Both
+paths share `api/start-submission` and `api/handle-form-submission-result`, so their state
+transitions are identical.
 
 ## Field arrays and field groups
 
@@ -260,10 +308,10 @@ in [`reagent-router`'s docs](router.md#navigation-and-url-generation) — this i
 (defn- login-form-card [login-form]
   (let [api-err @(rf/subscribe [:auth/error])
         loading? @(rf/subscribe [:auth/loading?])
-        on-submit (fn [{:keys [email password]}]
+        on-submit (form/create-form-submission login-form [_ {:keys [email password]} dispatch]
                     (auth/login! (str/lower-case (str/trim (str email)))
                                  password "client-app-id")
-                    (form/create-success-submission-result))]
+                    (dispatch nil))]
     [:div.login-box
      (when api-err
        [:div.banner.banner-danger
@@ -272,7 +320,7 @@ in [`reagent-router`'s docs](router.md#navigation-and-url-generation) — this i
           (str/includes? api-err "credentials") "Invalid email or password."
           :else api-err)])
 
-     [:form {:on-submit (api/handle-submit login-form on-submit)}
+     [:form {:on-submit on-submit}
       [:div.form-group
        [:label {:for "login-email"} "Email"]
        [:input.input (api/register-field login-form :email
@@ -304,16 +352,21 @@ in [`reagent-router`'s docs](router.md#navigation-and-url-generation) — this i
 
 `auth/login!` dispatches the login request and updates `:auth/user`, `:auth/error`,
 `:auth/loading?` asynchronously (typically built on [`reagent-http-api`](http-api.md)) —
-`on-submit` returns success immediately since, from the form's point of view, "submitting" is
-just "kick off the login"; the redirect is what reacts to it actually completing.
+the body dispatches `nil` immediately since, from the form's point of view, "submitting" is
+just "kick off the login"; the redirect is what reacts to it actually completing. (If you'd
+rather the form own the loading and error state, dispatch a promise of the response mapped
+to an error message instead, as in the quick start.)
 
 ## Gotchas
 
 - **The default `:on-change` assumes a native DOM change event** — see "Custom controls"
   above for anything else.
-- **An invalid submit touches every field and returns; `on-submit-fn` is never called.**
+- **An invalid submit touches every field and returns; the submission body never runs.**
   There's no separate "on invalid" callback — check `get-field-display-error` /
   `get-all-fields-errors` in render.
+- **A submission body that never calls `dispatch` throws** — every path through the body
+  must end in one `dispatch`. A `(when ...)` that falls through to `nil` without dispatching
+  is the classic way to hit this.
 - **`get-form-display-error` goes quiet while submitting**, so a stale error from a previous
   attempt won't flash before the new attempt's result replaces it.
 - **`create-form` registers into process-global state keyed by `form-id`.** Calling it again

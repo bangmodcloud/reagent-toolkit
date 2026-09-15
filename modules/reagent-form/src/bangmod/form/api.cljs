@@ -2,6 +2,7 @@
 
 (defprotocol IForm
   (-init-form [this])
+  (start-submission [this])
   (handle-submit [this on-submit-fn])
   (handle-form-submission-result [this submission-result])
   (get-is-submitting [this])

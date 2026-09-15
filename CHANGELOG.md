@@ -7,11 +7,28 @@ released at the same version number.
 
 ## [Unreleased]
 
+### Added
+
+- **form:** `bangmod.form.core/create-form-submission` — a macro that builds the
+  `:on-submit` handler: `(create-form-submission form [form values dispatch] body...)`. The
+  body reports the outcome by calling `dispatch` exactly once with `nil` (success), a string
+  (the form error) or a promise of either. Anything else — another value, a second call,
+  never dispatching, a rejected promise, a throwing body — marks the form failed with the
+  error's message and throws. This is now the documented way to submit; `api/handle-submit`
+  and the `create-*-submission-result` helpers remain as the lower-level path.
+- **form:** `api/start-submission` — the validate-and-mark-submitting gate both submit paths
+  share; returns the values map, or `nil` when it refused.
+
 ### Changed
 
 - **form:** docs and the Claude skill now present `bangmod.form.api` (form as first
-  argument) as the primary way to call a form; `make-api` is documented as the convenience
-  wrapper it is.
+  argument) as the one way to call a form.
+
+### Removed
+
+- **form:** `bangmod.form.core/make-api`. It was a map of `bangmod.form.api` functions with
+  the form pre-bound; call those directly — `(api/register-field form :email {...})` — and
+  build the submit handler with `create-form-submission`.
 
 ### Fixed
 

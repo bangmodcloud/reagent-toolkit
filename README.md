@@ -18,9 +18,10 @@ the gotchas worth knowing before you rely on it.
 ## 30-second tour
 
 ```clojure
-;; form: register-field returns ready-to-spread input props
+;; form: register-field returns ready-to-spread input props; dispatch nil or an error message
 (let [login (form/create-form :login)]
-  [:form {:on-submit (api/handle-submit login on-submit-fn)}
+  [:form {:on-submit (form/create-form-submission login [_ {:keys [email]} dispatch]
+                       (dispatch (when-not (valid-email? email) "Unknown email")))}
    [:input (api/register-field login :email {:type "email" :validators [v/required]})]
    (when-let [err (api/get-field-display-error login :email)] [:span.error err])])
 

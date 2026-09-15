@@ -2,7 +2,11 @@
   (:require [bangmod.form.form :as form]
             [bangmod.form.field-array :as field-array]
             [bangmod.form.field-group :as field-group]
-            [bangmod.form.api :as api]))
+            [bangmod.form.api :as api]
+            ;; The runtime `create-form-submission` (core.clj) expands into — required here
+            ;; so it is loaded wherever the macro is used.
+            [bangmod.form.submission])
+  (:require-macros [bangmod.form.core]))
 
 
 (defn create-form
@@ -14,22 +18,6 @@
 (def get-form
   "The form registered under `form-id`. Throws if there is none."
   form/get-form)
-
-(defn make-api [form]
-  (if (satisfies? api/IForm form)
-    {:handle-submit #(api/handle-submit form %1)
-     :get-form-display-error #(api/get-form-display-error form)
-     :get-is-submitting #(api/get-is-submitting form)
-     :register-field #(api/register-field form %1 %2)
-     :deregister-fields #(api/deregister-fields form %1)
-     :get-field-display-value #(api/get-field-display-value form %1)
-     :get-field-display-error #(api/get-field-display-error form %1)
-     :get-raw-field-value #(api/get-raw-field-value form %1)
-     :get-all-fields-errors #(api/get-all-fields-errors form)
-     :change-field-value #(api/change-field-value form %1 %2)
-     :validate-field #(api/validate-field form %1)
-     :touch #(api/touch form %1)}
-    (throw (js/Error. "form is not ReagentForm."))))
 
 (def FieldArray field-array/FieldArray)
 (def FieldGroup field-group/FieldGroup)

@@ -18,7 +18,9 @@
               :modules    {:lib {:entries [bangmod.form.core
                                            bangmod.http-api.core
                                            bangmod.router.core
-                                           bangmod.router.views]}}
+                                           bangmod.router.views
+                                           ;; proves the create-form-submission macro compiles
+                                           bangmod.form.core-macro-check]}}
               :js-options {:resolve {"react"            {:target :global :global "React"}
                                      "react-dom"        {:target :global :global "ReactDOM"}
                                      "react-dom/client" {:target :global :global "ReactDOMClient"}

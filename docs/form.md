@@ -114,6 +114,136 @@ message becomes the form's error.
 `create-form-submission` builds the `:on-submit` handler once, next to it. Everything else
 is a function in `bangmod.form.api` that takes the form as its first argument.
 
+## Custom controls (non-native `:on-change`)
+
+The generated `:on-change` reads `(.. event -target -value)` — right for a plain `<input>`,
+not for a control that hands `:on-change` the value itself. Override it, and pass the
+control whatever extra props it wants through `register-field` (unknown keys flow through).
+With [react-datepicker](https://github.com/Hacker0x01/react-datepicker), which gives
+`onChange` a `js/Date` and reads the current value from `selected`:
+
+```clojure
+(:require ["react-datepicker" :default DatePicker])
+
+[:> DatePicker (api/register-field form :submit-date
+                 {:date-format "dd/MM/yyyy"
+                  :selected    (api/get-field-display-value form :submit-date)
+                  :on-change   #(api/change-field-value form :submit-date %)})]
+```
+
+The form holds a `js/Date` (so an initial value for the field is a `js/Date` too — format
+it in the submission body). `:on-blur`/`:on-focus`/`:id` reach the picker as they would an
+`<input>`; the `:value` it also receives is that same `js/Date`, which react-datepicker
+ignores (it only honours a string `value`).
+
+## Field arrays and field groups
+
+`FieldArray` and `FieldGroup` register a field whose value is itself a list of sub-forms or a
+single nested sub-form. Both take `:form` (a form, or a form-id keyword) and `:name` (the
+field name they register under on the parent), plus a render prop.
+
+**`FieldGroup`** — render prop receives the nested form; register fields on it like any
+other form:
+
+```clojure
+[form/FieldGroup {:form parent-form :name :billing-address}
+ (fn [nested-form]
+   [:div.address-group
+    [:div.form-group
+     [:label "Street"]
+     [:input (api/register-field nested-form :street {:validators [v/required]})]
+     (when-let [err (api/get-field-display-error nested-form :street)] [:span.error err])]])]
+```
+
+**`FieldArray`** — render prop receives `(add-fn remove-fn forms)`: call `add-fn` (optionally
+with a map of initial values) to append a sub-form, `(remove-fn index)` to drop one, and
+render `forms` (a vector of sub-forms) yourself:
+
+```clojure
+[form/FieldArray {:form parent-form :name :items}
+ (fn [add-fn remove-fn item-forms]
+   [:div
+    (doall
+     (map-indexed
+      (fn [idx item-form]
+        ^{:key idx}
+        [:div.item-row
+         [:input (api/register-field item-form :title {:placeholder "Item title"})]
+         [:input (api/register-field item-form :qty {:type "number" :validators [v/required]})]
+         [:button {:type "button" :on-click #(remove-fn idx)} "Remove"]
+         (when-let [err (api/get-field-display-error item-form :qty)] [:span.error err])])
+      item-forms))
+    [:button {:type "button" :on-click #(add-fn {:qty 1})} "+ Add item"]])]
+```
+
+On the parent, the array is one field: `(api/get-form-values parent)` gives `:items` as a
+vector of row maps, and the field's validator runs `validate-all-fields` on every row, so a
+row error blocks the parent's submit and surfaces as
+`(api/get-field-display-error parent :items)` (the first row's first error). Values passed
+to `add-fn` are set through `change-field-value`, i.e. as touched values, not as initial
+values — a validator on such a field runs right away.
+
+### Rows and `:initial-values`
+
+The parent's `:initial-values` for the array's name is a vector of row maps. On render the
+array makes sure there is at least one row per entry — `[{...} {...} {...}]` shows up as
+three rows, each sub-form reading its own map as its initial values — and any rows added
+past that start empty (or from what you gave `add-fn`).
+
+That "at least one row per entry" is a live rule, re-checked on every render, which is what
+makes `:initial-values` reactive for arrays: pass a reaction/atom holding the list and rows
+appear as the list grows. It is also why removing a row has two possible meanings, which is
+what `:element-removal-strategy` chooses between.
+
+### Removing rows: `:element-removal-strategy`
+
+`(remove-fn idx)` always drops the sub-form at `idx`. What happens to the initial-values
+entry that row was reading is the strategy:
+
+| Strategy | Who owns the removal | What `remove-fn` does | Use when |
+| --- | --- | --- | --- |
+| `:both` (default) | the array | drops the sub-form **and** hides that entry of `:initial-values` from the array, so the remaining rows keep lining up with their original entries and the slot is not re-filled | `:initial-values` is a plain value (or you never change it yourself); the array's rows *are* the truth until submit |
+| `:element-only` | your code | drops the sub-form only; `:initial-values` is left alone — it is expected to lose that entry itself | `:initial-values` is a reaction over app state you update on removal (deleted on the server, removed from an atom, ...) |
+
+With `:both`, a form created as
+
+```clojure
+(form/create-form :order {:initial-values {:items [{:title "A"} {:title "B"} {:title "C"}]}})
+```
+
+renders A, B, C; `(remove-fn 1)` leaves A and C, and they stay A and C — the array remembers
+that the second entry is gone and does not re-add it from the still-three-entry
+`:initial-values`. Submit produces `{:items [{:title "A"} {:title "C"}]}`.
+
+With `:element-only`, the array removes the sub-form and trusts *you* to shrink the source,
+because the "one row per entry" rule will otherwise put a row straight back:
+
+```clojure
+(defonce items (r/atom [{:title "A"} {:title "B"} {:title "C"}]))
+(form/create-form :order {:initial-values (r/reaction {:items @items})})
+
+[form/FieldArray {:form :order :name :items :element-removal-strategy :element-only}
+ (fn [add-fn remove-fn item-forms]
+   ...
+   [:button {:type "button"
+             :on-click (fn []
+                         (remove-fn idx)
+                         (swap! items #(into (subvec % 0 idx) (subvec % (inc idx)))))}
+    "Remove"]
+   ...)]
+```
+
+Do both in the same handler, synchronously: rows shift to follow their entries by position,
+so if `:initial-values` still has the old entry when the next render runs, the array
+re-fills to the old length — the rows after `idx` show the shifted entries, and an empty
+row appears at the end once your source does shrink. (If the removal is an async server
+call, remove from the local source first and reconcile after; don't wait for the response.)
+
+Mixing them up is the failure mode to know: shrinking the source yourself under `:both`
+removes the entry twice — the array hides one slot *and* the source lost one — so the row
+after the removed one goes blank; leaving the source alone under `:element-only` brings the
+row back.
+
 ## API reference
 
 Two namespaces. `bangmod.form.core` creates forms and holds the nested-form components;
@@ -231,136 +361,6 @@ the values map and must return
 via a core.async read port; a throwing `on-submit-fn` becomes a failed submission. Both
 paths share `api/start-submission` and `api/handle-form-submission-result`, so their state
 transitions are identical.
-
-## Field arrays and field groups
-
-`FieldArray` and `FieldGroup` register a field whose value is itself a list of sub-forms or a
-single nested sub-form. Both take `:form` (a form, or a form-id keyword) and `:name` (the
-field name they register under on the parent), plus a render prop.
-
-**`FieldGroup`** — render prop receives the nested form; register fields on it like any
-other form:
-
-```clojure
-[form/FieldGroup {:form parent-form :name :billing-address}
- (fn [nested-form]
-   [:div.address-group
-    [:div.form-group
-     [:label "Street"]
-     [:input (api/register-field nested-form :street {:validators [v/required]})]
-     (when-let [err (api/get-field-display-error nested-form :street)] [:span.error err])]])]
-```
-
-**`FieldArray`** — render prop receives `(add-fn remove-fn forms)`: call `add-fn` (optionally
-with a map of initial values) to append a sub-form, `(remove-fn index)` to drop one, and
-render `forms` (a vector of sub-forms) yourself:
-
-```clojure
-[form/FieldArray {:form parent-form :name :items}
- (fn [add-fn remove-fn item-forms]
-   [:div
-    (doall
-     (map-indexed
-      (fn [idx item-form]
-        ^{:key idx}
-        [:div.item-row
-         [:input (api/register-field item-form :title {:placeholder "Item title"})]
-         [:input (api/register-field item-form :qty {:type "number" :validators [v/required]})]
-         [:button {:type "button" :on-click #(remove-fn idx)} "Remove"]
-         (when-let [err (api/get-field-display-error item-form :qty)] [:span.error err])])
-      item-forms))
-    [:button {:type "button" :on-click #(add-fn {:qty 1})} "+ Add item"]])]
-```
-
-On the parent, the array is one field: `(api/get-form-values parent)` gives `:items` as a
-vector of row maps, and the field's validator runs `validate-all-fields` on every row, so a
-row error blocks the parent's submit and surfaces as
-`(api/get-field-display-error parent :items)` (the first row's first error). Values passed
-to `add-fn` are set through `change-field-value`, i.e. as touched values, not as initial
-values — a validator on such a field runs right away.
-
-### Rows and `:initial-values`
-
-The parent's `:initial-values` for the array's name is a vector of row maps. On render the
-array makes sure there is at least one row per entry — `[{...} {...} {...}]` shows up as
-three rows, each sub-form reading its own map as its initial values — and any rows added
-past that start empty (or from what you gave `add-fn`).
-
-That "at least one row per entry" is a live rule, re-checked on every render, which is what
-makes `:initial-values` reactive for arrays: pass a reaction/atom holding the list and rows
-appear as the list grows. It is also why removing a row has two possible meanings, which is
-what `:element-removal-strategy` chooses between.
-
-### Removing rows: `:element-removal-strategy`
-
-`(remove-fn idx)` always drops the sub-form at `idx`. What happens to the initial-values
-entry that row was reading is the strategy:
-
-| Strategy | Who owns the removal | What `remove-fn` does | Use when |
-| --- | --- | --- | --- |
-| `:both` (default) | the array | drops the sub-form **and** hides that entry of `:initial-values` from the array, so the remaining rows keep lining up with their original entries and the slot is not re-filled | `:initial-values` is a plain value (or you never change it yourself); the array's rows *are* the truth until submit |
-| `:element-only` | your code | drops the sub-form only; `:initial-values` is left alone — it is expected to lose that entry itself | `:initial-values` is a reaction over app state you update on removal (deleted on the server, removed from an atom, ...) |
-
-With `:both`, a form created as
-
-```clojure
-(form/create-form :order {:initial-values {:items [{:title "A"} {:title "B"} {:title "C"}]}})
-```
-
-renders A, B, C; `(remove-fn 1)` leaves A and C, and they stay A and C — the array remembers
-that the second entry is gone and does not re-add it from the still-three-entry
-`:initial-values`. Submit produces `{:items [{:title "A"} {:title "C"}]}`.
-
-With `:element-only`, the array removes the sub-form and trusts *you* to shrink the source,
-because the "one row per entry" rule will otherwise put a row straight back:
-
-```clojure
-(defonce items (r/atom [{:title "A"} {:title "B"} {:title "C"}]))
-(form/create-form :order {:initial-values (r/reaction {:items @items})})
-
-[form/FieldArray {:form :order :name :items :element-removal-strategy :element-only}
- (fn [add-fn remove-fn item-forms]
-   ...
-   [:button {:type "button"
-             :on-click (fn []
-                         (remove-fn idx)
-                         (swap! items #(into (subvec % 0 idx) (subvec % (inc idx)))))}
-    "Remove"]
-   ...)]
-```
-
-Do both in the same handler, synchronously: rows shift to follow their entries by position,
-so if `:initial-values` still has the old entry when the next render runs, the array
-re-fills to the old length — the rows after `idx` show the shifted entries, and an empty
-row appears at the end once your source does shrink. (If the removal is an async server
-call, remove from the local source first and reconcile after; don't wait for the response.)
-
-Mixing them up is the failure mode to know: shrinking the source yourself under `:both`
-removes the entry twice — the array hides one slot *and* the source lost one — so the row
-after the removed one goes blank; leaving the source alone under `:element-only` brings the
-row back.
-
-## Custom controls (non-native `:on-change`)
-
-The generated `:on-change` reads `(.. event -target -value)` — right for a plain `<input>`,
-not for a control that hands `:on-change` the value itself. Override it, and pass the
-control whatever extra props it wants through `register-field` (unknown keys flow through).
-With [react-datepicker](https://github.com/Hacker0x01/react-datepicker), which gives
-`onChange` a `js/Date` and reads the current value from `selected`:
-
-```clojure
-(:require ["react-datepicker" :default DatePicker])
-
-[:> DatePicker (api/register-field form :submit-date
-                 {:date-format "dd/MM/yyyy"
-                  :selected    (api/get-field-display-value form :submit-date)
-                  :on-change   #(api/change-field-value form :submit-date %)})]
-```
-
-The form holds a `js/Date` (so an initial value for the field is a `js/Date` too — format
-it in the submission body). `:on-blur`/`:on-focus`/`:id` reach the picker as they would an
-`<input>`; the `:value` it also receives is that same `js/Date`, which react-datepicker
-ignores (it only honours a string `value`).
 
 ## Gotchas
 

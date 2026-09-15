@@ -2,10 +2,10 @@
 
 `io.github.bangmodcloud/reagent-router` — namespace `bangmod.router.*`
 
-A thin wrapper around [bidi](https://github.com/juxt/bidi) (route matching) and
-[pushy](https://github.com/kibu-oss/pushy) (HTML5 history) for Reagent/re-frame SPAs. Each
-feature registers its own route table independently — no central routes file every feature
-has to touch — and one component renders whichever route is currently active.
+Turns the browser URL into "which component is on screen". You write route tables that map
+URL patterns to components, each feature registers its own, and one panel component renders
+whatever the current URL matches. Under the hood: [bidi](https://github.com/juxt/bidi) does
+the matching, [pushy](https://github.com/kibu-oss/pushy) drives HTML5 history.
 
 ## Install
 
@@ -13,175 +13,178 @@ See the [root README](../README.md#installation) for `deps.edn` / git-dependency
 
 ## Quick start
 
-```clojure
-(ns myapp.feature.home.view)
-
-(defn home-page []
-  [:div "Home"])
-```
-
-```clojure
-(ns myapp.feature.not-found.view)
-
-(defn not-found-panel []
-  [:div "No component found for this route."])
-```
-
-```clojure
-(ns myapp.feature.home.routes
-  (:require [myapp.feature.home.view :as view]))
-
-(def routes
-  ["" {"/" [:home view/home-page]}])
-```
+Three parts: a route table, the panel that renders the match, and `start!`.
 
 ```clojure
 (ns myapp.core
   (:require [reagent.dom :as rdom]
             [bangmod.router.core :as router]
-            [bangmod.router.views :as router-views]
-            [myapp.feature.home.routes :as home-routes]
-            [myapp.feature.not-found.view :as not-found]))
+            [bangmod.router.views :as router-views]))
 
+;; 1. Components, and a table mapping URL patterns to them.
+(defn home-page []    [:div "Home"])
+(defn about-page []   [:div "About"])
+(defn not-found []    [:div "Nothing here."])
+
+(def routes
+  ["" {"/"      [:home  home-page]
+       "/about" [:about about-page]}])
+
+;; 2. The panel: renders whichever component the current URL matches.
 (defn root []
-  [:div [router-views/matched-route-panel]])
+  [:div
+   [:nav
+    [:a {:href (router/url-for :home)} "Home"] " "
+    [:a {:href (router/url-for :about)} "About"]]
+   [router-views/matched-route-panel]])
 
+;; 3. Register, start, render — in that order.
 (defn init []
-  ;; Each feature registers its own table; call this once per feature, in any order.
-  (router/register-routes home-routes/routes)
-  ;; Call once, after every feature has registered. Unmatched URLs render :default-component.
-  (router/start! {:default-component not-found/not-found-panel})
+  (router/register-routes routes)
+  (router/start! {:default-component not-found})
   (rdom/render [root] (.getElementById js/document "app")))
 ```
 
-## Route syntax
+Clicking a link swaps the panel's content without a page load — pushy intercepts clicks on
+same-origin `<a href>`s and pushes history instead. A URL nothing matches renders
+`:default-component`.
 
-[bidi](https://github.com/juxt/bidi) route tables, with one change: each leaf is
-`[handler-keyword component]` instead of bidi's bare handler keyword. Map tables and
-vector-of-pairs tables both work; path-parameter patterns go in the pattern position
-(a map key, or the first element of a pair):
+## Route tables
+
+A route table is a bidi table with one change: **a leaf is `[handler-keyword component]`**,
+not bidi's bare keyword. The keyword is the route's name everywhere else — `url-for`,
+`navigate!`, `atom-matched-route` — and the component is what the panel renders.
 
 ```clojure
-["" {"/" [:home home-view]
-     ["/projects/" :id] [:project-detail project-view]   ; :id lands in atom-params
-     "/settings" {"/profile" [:settings-profile profile-view]
-                  "/billing" [:settings-billing billing-view]}}]
+["" {"/"                 [:home            home-page]
+     ["/projects/" :id]  [:project-detail  project-page]    ; path parameter
+     "/settings"         {"/profile"  [:settings-profile  profile-page]
+                          "/billing"  [:settings-billing  billing-page]}}]
 ```
 
-A malformed table — a leaf without a component, a route that isn't a `[pattern matched]`
-pair — throws at `register-routes` time with the offending form in the message, instead of
-compiling into a table that silently matches nothing.
+Reading it:
 
-`:home` / `:project-detail` / ... is the route's identity everywhere else in this API
-(`url-for`, `navigate!`, `atom-matched-route`); the paired component is what
-`matched-route-panel` renders when that route is current.
+- The outer `["" {...}]` is `[prefix table]`. The prefix is prepended to every pattern
+  inside; `""` means none. A feature can use it to namespace itself: `["/admin" {...}]`.
+- A **map** table is `pattern -> leaf-or-subtable`. A subtable nests: `"/settings"` +
+  `"/profile"` matches `/settings/profile`.
+- A **path parameter** is a pattern vector: `["/projects/" :id]` matches `/projects/42`
+  with `{:id "42"}` in the params. Parameters are always strings.
+- A **vector of pairs** works where a map does — `["" [["/" [:home home-page]]
+  ["/about" [:about about-page]]]]` — and preserves order, which matters when two patterns
+  could both match: bidi takes the first.
 
-## Registering routes per feature
+A table that doesn't fit this grammar — a leaf without a component, a route that isn't a
+`[pattern matched]` pair — throws at `register-routes` time with the offending form in the
+message, rather than compiling into something that quietly matches nothing.
 
-Each feature owns its route table and registers it during its own init:
+## One table per feature
+
+`register-routes` can be called any number of times; each call adds a table to the set the
+router matches against. The pattern this is built for is each feature owning its routes and
+registering them in its own `init`:
 
 ```clojure
-(ns myapp.feature.account.routes
-  (:require [myapp.feature.account.view :as view]))
-
-(def routes
-  ["" {"/account" [:account view/page]}])
-```
-
-```clojure
-(ns myapp.feature.account.core
+(ns myapp.feature.projects.core
   (:require [bangmod.router.core :as router]
-            [myapp.feature.account.routes :as routes]))
+            [myapp.feature.projects.view :as view]))
 
 (defn init []
-  (router/register-routes routes/routes))
+  (router/register-routes
+    ["/projects" {""          [:projects       view/list-page]
+                  ["/" :id]   [:project-detail view/detail-page]}]))
 ```
-
-App boot wires every feature together and starts the router last, once every feature has
-registered:
 
 ```clojure
 (ns myapp.core
   (:require [bangmod.router.core :as router]
-            [bangmod.http-api.core :as http-api]
-            [myapp.feature.authentication.core :as authentication-feature]
-            [myapp.feature.account.core :as account-feature]
-            [myapp.feature.admin.core :as admin-feature]
-            [myapp.feature.projects.core :as projects-feature]
-            [myapp.feature.docs.core :as docs-feature]
-            [myapp.feature.not-found.view :as not-found]
-            [myapp.auth :as auth]))
+            [myapp.feature.projects.core :as projects]
+            [myapp.feature.account.core :as account]
+            [myapp.feature.not-found.view :as not-found]))
 
 (defn init []
-  (http-api/set-auth-token-provider! (fn [] @auth/access-token))
-  (authentication-feature/init)
-  (account-feature/init)
-  (admin-feature/init)
-  (projects-feature/init)
-  (docs-feature/init)
-  (router/start! {:default-component not-found/not-found-panel}))
+  (projects/init)
+  (account/init)
+  (router/start! {:default-component not-found/page}))   ; last, once
 ```
 
-No feature's `init` needs to know about any other's routes — adding, removing, or renaming a
-feature is a local change plus one `init` call in `myapp.core`.
+Adding a feature is one `init` call here; nothing else needs to know its URLs. The one rule
+is order: **every `register-routes` before `start!`**. Tables registered after `start!` are
+matched from the next navigation on, not for the URL already on screen.
 
-## Navigation and URL generation
+## Reading the current route
 
-```clojure
-;; navigate! — push a URL and re-match, as if the user followed a link
-(router/navigate! :home)
-(router/navigate! "/settings/profile")           ; a literal path works too
+Three reagent reactions in `bangmod.router.core`, for use in any render fn:
 
-;; url-for — reverse-route a handler into a path string
-(router/url-for :project-detail :id 42)
-;; => "/projects/42"
-
-;; a trailing map with a :query key adds a query string instead of a path param
-(router/url-for :project-detail :id 42 {:query {:tab "logs" :sort "asc"}})
-;; => "/projects/42?tab=logs&sort=asc"
-```
-
-`navigate!` belongs in a lifecycle callback or event handler, not in a render function —
-changing the matched route while a render is still in progress can unmount the very
-component that triggered the navigation. A real use: redirecting away from a login screen
-once auth succeeds (the form half is [`reagent-form`](form.md)):
+| Reaction | Value |
+| --- | --- |
+| `@router/atom-matched-route` | the handler keyword of the current route, or `:default` when nothing matched |
+| `@router/atom-params` | path parameters, e.g. `{:id "42"}`; `{}` when the route has none |
+| `@router/atom-query-params` | query string as a map, e.g. `{:tab "logs"}` — keys keywordized, values strings |
 
 ```clojure
-(ns myapp.feature.authentication.view
-  (:require [reagent.core :as r]
-            [re-frame.core :as rf]
-            [bangmod.router.core :as router]))
-
-(defn login-panel []
-  (let [user-sub (rf/subscribe [:auth/user])
-        redirect! (fn [] (when @user-sub (router/navigate! :account)))]
-    (r/create-class
-     {:component-did-mount  (fn [_] (redirect!))
-      :component-did-update (fn [_] (redirect!))
-      :reagent-render       (fn [] [:div "..."])})))
-```
-
-## Reactive route state
-
-```clojure
-(ns myapp.feature.project.view
+(ns myapp.feature.projects.view
   (:require [bangmod.router.core :as router]))
 
-(defn project-view []
-  (let [{:keys [id]} @router/atom-params
-        {:keys [tab]} @router/atom-query-params
-        current-route @router/atom-matched-route]
+(defn detail-page []
+  (let [{:keys [id]}  @router/atom-params          ; "/projects/42"       -> "42"
+        {:keys [tab]} @router/atom-query-params]   ; "?tab=logs"          -> "logs"
     [:div
-     [:h2 "Project ID: " id]
-     [:p "Active tab: " (or tab "overview")]
-     [:small "Matched handler: " (str current-route)]]))
+     [:h2 "Project " id]
+     [:p "Tab: " (or tab "overview")]]))
 ```
 
-## `registration-report`
+They are reactions, so a component that derefs one re-renders when the URL changes. A page
+component reads its own params this way rather than receiving them as arguments — the panel
+renders every routed component with no arguments.
 
-Two mistakes the router can't surface on its own: a route with no matching component (falls
-through to the default/fallback, silently), and a component registered under a keyword no
-route table produces (dead code). `registration-report` audits the compiled table for both:
+After `start!` the same state also lives in re-frame's app-db, under
+`[:_router :matched-route]` (the full match: `:handler`, `:route-params`, `:query-params`)
+and `[:_router :app-routes]` (the compiled tables), for subscriptions and event handlers
+that want it.
+
+## Navigating
+
+```clojure
+(router/url-for :project-detail :id 42)                       ; => "/projects/42"
+(router/url-for :project-detail :id 42 {:query {:tab "logs"}}) ; => "/projects/42?tab=logs"
+
+(router/navigate! :home)                    ; by name
+(router/navigate! (router/url-for :project-detail :id 42))
+(router/navigate! "/settings/profile")      ; or any path string
+```
+
+`url-for` takes the route's keyword and its path parameters as keyword arguments; a
+trailing map with `:query` becomes the query string. It is the right thing to put in an
+`:href` — links stay real links (open-in-new-tab, copy-address work) and pushy still
+routes a plain click in place.
+
+`navigate!` pushes the URL onto history and re-matches, as if the user had followed a link.
+Call it from an event handler or a lifecycle callback, **never from a render fn**:
+changing the matched route mid-render can unmount the very component that is rendering.
+The typical case is a redirect once some state arrives:
+
+```clojure
+(defn login-page []
+  (let [user (rf/subscribe [:auth/user])]
+    (r/create-class
+     {:component-did-update (fn [_] (when @user (router/navigate! :home)))
+      :reagent-render       (fn [] [login-form])})))
+```
+
+## Unmatched URLs and the default component
+
+`start!`'s `:default-component` renders whenever the URL matches no table — a 404 page,
+typically. It is also what a route with a typo'd or missing component falls back to (see
+the next section), so keep it recognisable. Without one, the panel renders
+`"No component found for this route."`.
+
+## Auditing the tables: `registration-report`
+
+Two mistakes produce no error at runtime: a route whose component never got registered
+(the URL renders the default component, silently), and a component registered under a
+keyword no table produces (dead code). Both are visible in the compiled tables, so check
+them in dev after every feature has initialized:
 
 ```clojure
 (router/registration-report)
@@ -192,48 +195,54 @@ route table produces (dead code). `registration-report` audits the compiled tabl
 ;;     :orphan-registrations [:old-dashboard]}
 ```
 
-| Field                  | Meaning                                                              |
-| ----------------------- | --------------------------------------------------------------------- |
-| `:routed`               | handler keywords the compiled route table can match                   |
-| `:registered`           | handler keywords with a component installed                           |
-| `:duplicates`           | handlers registered more than once (second silently shadows first)    |
-| `:orphan-routes`        | routable but no component — renders the default, silently             |
-| `:orphan-registrations` | component registered for a route nothing points at — dead code        |
+| Key | Meaning |
+| --- | --- |
+| `:routed` | handler keywords some table can match |
+| `:registered` | handler keywords that have a component |
+| `:duplicates` | keywords registered twice — the later component silently replaces the earlier |
+| `:orphan-routes` | routable, but no component: renders the default component |
+| `:orphan-registrations` | a component no route reaches |
 
-Worth wiring into a dev-only check after every feature has initialized.
+A duplicate is also caught at registration time: in a dev build (`goog.DEBUG`) the second
+`register-routes` for the same keyword throws; in production it logs to the console and the
+later component wins, because a white screen is worse than a shadowed route.
 
 ## API reference
 
 `bangmod.router.core`:
 
-| Function / var | Signature | |
-| --- | --- | --- |
-| `start!` | `[{:keys [default-component]}]` | Starts the router: installs the fallback, wires re-frame, starts listening to history. Call once, after every feature has called `register-routes`. |
-| `register-routes` | `[routes]` | Merges one bidi route table into the app's combined route set. |
-| `url-for` | `[handler & args]` | Builds a URL. |
-| `navigate!` | `[handler-or-url]` | Pushes history and re-matches. |
-| `registration-report` | `[]` | See above. |
-| `atom-matched-route` | reaction | Current route's handler keyword (`:default` if none matched). |
-| `atom-params` | reaction | Current route's path parameters (`{}` if none). |
-| `atom-query-params` | reaction | Current route's query parameters. |
+| | |
+| --- | --- |
+| `(register-routes table)` | Adds one route table. Call per feature, before `start!`. Throws on a malformed table. |
+| `(start! {:default-component c})` | Once, after every `register-routes`: installs the fallback, mirrors route state into re-frame, starts listening to history and matches the current URL. |
+| `(url-for kw & path-params {:query {...}}?)` | The path for a route: `(url-for :project-detail :id 42)`. Optional trailing `{:query m}` appends a query string. |
+| `(navigate! kw-or-path)` | Push the URL for a route keyword, or a literal path, and re-match. Not from a render fn. |
+| `atom-matched-route` | Reaction: current handler keyword, `:default` when unmatched. |
+| `atom-params` | Reaction: path parameters map. |
+| `atom-query-params` | Reaction: query parameters map. |
+| `(registration-report)` | Dev audit of the compiled tables — see above. |
 
 `bangmod.router.views`:
 
-| Component | |
+| | |
 | --- | --- |
-| `[matched-route-panel]` | Renders whatever component is registered for `atom-matched-route`'s current value. Drop it once in your root component. |
+| `[matched-route-panel]` | Renders the component for the current route, with no arguments. Put it once in the root component, mounted after `start!`. |
 
 ## Gotchas
 
-- **A duplicate route registration is a silent shadow, on purpose, differently in dev and
-  prod.** Two components under the same handler keyword is a `defmulti`/`defmethod` — the
-  second silently replaces the first. A `goog.DEBUG` build throws immediately; a production
-  build only logs to the console, since a shadowed route is a bug but a white screen in
-  production is worse. `registration-report`'s `:duplicates` catches this either way.
-- **`start!` is boot-time, once, after every `register-routes` call.** Routes registered
-  after `start!` still work, but nothing renders them until the next navigation.
-- **An orphan route renders the default component, not an error** — no exception, no console
-  warning. `registration-report`'s `:orphan-routes` is the only way to find it.
-- **Overlapping URL patterns across features aren't detected.** Two features registering the
-  same path under different handler keywords is first-registered-wins, silently —
-  `register-route-key!` only catches an identical handler keyword, not an identical URL.
+- **`start!` after every `register-routes`, once.** A table registered afterwards is only
+  consulted on the next navigation.
+- **Mount `matched-route-panel` after `start!`.** Before it, no route is matched and no
+  default is installed, so the panel has nothing to render.
+- **Never `navigate!` from a render fn** — lifecycle callbacks and event handlers only.
+- **Same URL in two features is first-registered-wins, silently.** Registration only
+  detects a repeated handler *keyword*, not a repeated *pattern*.
+- **An orphan route renders the default component**, not an error. `registration-report`
+  is the only thing that will tell you.
+- **Every same-origin link is intercepted.** pushy takes over clicks on `<a href>`s that
+  point at this origin, matched or not; an unmatched one renders the default component
+  rather than loading the page. Left to the browser: other origins, `target="_blank"` /
+  `"_self"`, modifier- or non-left-clicks, and anything with `data-pushy-ignore`.
+- **Browser only.** `bangmod.router.internal` needs `js/window` at load time (pushy). The
+  pure route-compilation half, `bangmod.router.table`, loads anywhere and is what the unit
+  tests cover.

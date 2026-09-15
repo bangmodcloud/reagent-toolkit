@@ -99,16 +99,6 @@ Attach a bearer token to every request automatically, once at boot:
 (http-api/set-auth-token-provider! (fn [] @auth/access-token))
 ```
 
-## GET and SSE on the same URI
-
-The quick start's `:changes` points at the same `:uri` as its `:get` on purpose — that's
-the intended way to add a live-update path to an existing endpoint without a parallel one.
-`:get` returns the current value once, on demand; `:changes` opens a stream at the identical
-URI and delivers that same shape again on every change. Two entries exist because `defapi`
-keys both the request cycle and the reaction by *endpoint name*, not by URI — one URI, two
-access patterns, not two endpoints to keep in sync. The server side only needs the same route
-to also serve `Accept: text/event-stream`; nothing about `:get` has to change.
-
 ## API reference
 
 `bangmod.http-api.core`:

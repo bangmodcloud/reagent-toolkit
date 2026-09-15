@@ -13,17 +13,22 @@ See the [root README](../README.md#installation) for `deps.edn` / git-dependency
 
 ## Quick start
 
+Declare the API once:
+
 ```clojure
 (ns myapp.api.account
   (:require [bangmod.http-api.core :refer [defapi]]))
 
 (defapi :account
   {:base-url "https://api.example.com"}
-  {:get {:method :get :uri "/api/query/account-projection/me" :response-format :json}})
+  {:get     {:method :get :uri "/api/query/account-projection/me" :response-format :json}
+   :changes {:method :sse :uri "/api/query/account-projection/me"}})
 ```
 
-Load on mount, render whatever the endpoint holds — `execute` fires the request and returns
-the endpoint's reaction:
+### In a reagent component
+
+`execute` fires the request and returns the endpoint's reaction. Call it where a form-2
+component sets up — it runs once on mount — and deref in the render fn:
 
 ```clojure
 (ns myapp.feature.account.view
@@ -40,10 +45,29 @@ the endpoint's reaction:
 The reaction holds `nil` until the first response, then `{:success? true :data <parsed
 body>}`; after a failed call it keeps the last good `:data`, flips `:success?` to `false` and
 adds `:error <cljs-ajax error map>`. It is the endpoint's shared slot, so any other call
-against `:account/:get` updates it too.
+against `:account/:get` updates it too — and re-rendering never re-fires it, because the
+call sits outside the render fn.
 
-When you need *this* request's result as a value — a go block, a callback, an error branch —
-`raw-execute` returns a `core.async` channel delivering exactly one map:
+On an `:sse` endpoint `execute` opens the stream instead and returns the subscription handle,
+which derefs the same way — `(:data @x)` is the latest frame. A stream has to be closed when
+the component goes, so the shape that fits both cases is `r/with-let` with a `finally`:
+
+```clojure
+(defn account-live []
+  (r/with-let [live (http-api/execute :account :changes)]   ; opens once, here
+    [:div (:name (:data @live))
+     (when-not (:connected? @live) [:span "reconnecting…"])]
+    (finally (http-api/unsubscribe! live))))                ; no-op for a plain request
+```
+
+The SSE handle derefs to `{:sse? true :connected? bool :data <latest frame> :message-count n
+:error <message or nil>}`; `unsubscribe!` on anything that isn't a subscription is a no-op,
+so the `finally` line is the same whichever method the endpoint has.
+
+### `raw-execute`: the request as a value
+
+When you need *this* request's result — a go block, an event handler, an error branch, a
+form submission — `raw-execute` returns a `core.async` channel delivering exactly one map:
 `{:success? true :data <parsed response body>}` on success, or
 `{:success? false :data <cljs-ajax error map>}` on failure (that shape — `:status`,
 `:response`, ... — is [cljs-ajax's](https://github.com/JulianBirch/cljs-ajax), not this
@@ -63,23 +87,11 @@ library's):
         (rf/dispatch [:account/set-error (:data res)])))))
 ```
 
-`execute` is exactly `raw-execute` followed by `get-data-reaction`; both update the same slot.
+`execute` is exactly `raw-execute` followed by `get-data-reaction`; both update the same
+slot, so a `raw-execute` from an event handler also refreshes every component bound to the
+endpoint's reaction.
 
-On an `:sse` endpoint `execute` opens the stream instead and returns the subscription handle,
-which derefs the same way — `(:data @x)` is the latest frame. Because a stream has to be
-closed, the component shape that fits both cases is `r/with-let` with a `finally`:
-
-```clojure
-(defn account-live []
-  (r/with-let [live (http-api/execute :account :changes)]   ; opens once, here
-    [:div (:name (:data @live))
-     (when-not (:connected? @live) [:span "reconnecting…"])]
-    (finally (http-api/unsubscribe! live))))                ; no-op for a plain request
-```
-
-The SSE handle derefs to `{:sse? true :connected? bool :data <latest frame> :message-count n
-:error <message or nil>}`; `unsubscribe!` on anything that isn't a subscription is a no-op,
-so the `finally` line is the same whichever method the endpoint has.
+### Auth
 
 Attach a bearer token to every request automatically, once at boot:
 
@@ -89,14 +101,8 @@ Attach a bearer token to every request automatically, once at boot:
 
 ## GET and SSE on the same URI
 
-`:sse` can point at the same `:uri` as a `:get` — that's the intended way to add a live-update
-path to an existing endpoint without a parallel one:
-
-```clojure
-{:get     {:method :get :uri "/api/query/account-projection/me" :response-format :json}
- :changes {:method :sse :uri "/api/query/account-projection/me"}}
-```
-
+The quick start's `:changes` points at the same `:uri` as its `:get` on purpose — that's
+the intended way to add a live-update path to an existing endpoint without a parallel one.
 `:get` returns the current value once, on demand; `:changes` opens a stream at the identical
 URI and delivers that same shape again on every change. Two entries exist because `defapi`
 keys both the request cycle and the reaction by *endpoint name*, not by URI — one URI, two

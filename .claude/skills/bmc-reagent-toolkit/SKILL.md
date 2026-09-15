@@ -205,11 +205,13 @@ and `:on-change`/`:on-blur`/`:on-focus` overrides.
 
 The generated `:on-change` reads `(.. e -target -value)` — for custom controls (date
 pickers, selects) that pass a raw value, override it:
-`:on-change #(api/change-field-value form :start-date %)`. react-datepicker pattern
-(`["react-datepicker" :default DatePicker]`): take `register-field`'s props, `(dissoc :value
-:type)`, `(assoc :selected value :date-format "dd/MM/yyyy")`, render with `[:> DatePicker
-props]` — `:on-blur`/`:on-focus`/`:id` carry over as-is; the form then holds a `js/Date`
-(initial values must be `js/Date` too; stringify in the submission body).
+`:on-change #(api/change-field-value form :start-date %)`. Extra keys in the config flow
+through to the element, so a control's own props ride along. react-datepicker
+(`["react-datepicker" :default DatePicker]`):
+`[:> DatePicker (api/register-field form :d {:date-format "dd/MM/yyyy" :selected
+(api/get-field-display-value form :d) :on-change #(api/change-field-value form :d %)})]`
+— the form then holds a `js/Date` (initial values must be `js/Date` too; stringify in the
+submission body); the `:value` also passed is a Date, which react-datepicker ignores.
 `get-form-values` reads `nil` for a never-touched field (initial values are copied in by
 `touch`; a submit touches everything).
 

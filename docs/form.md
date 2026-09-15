@@ -343,64 +343,24 @@ row back.
 ## Custom controls (non-native `:on-change`)
 
 The generated `:on-change` reads `(.. event -target -value)` — right for a plain `<input>`,
-not for a control that hands `:on-change` something else. Override it and write straight to
-form state with `change-field-value`. Here with
-[react-datepicker](https://github.com/Hacker0x01/react-datepicker) (`npm install
-react-datepicker`; its stylesheet is `react-datepicker/dist/react-datepicker.css`), which
-calls `onChange` with a `js/Date` and wants the current value as `selected`, not `value`:
+not for a control that hands `:on-change` the value itself. Override it, and pass the
+control whatever extra props it wants through `register-field` (unknown keys flow through).
+With [react-datepicker](https://github.com/Hacker0x01/react-datepicker), which gives
+`onChange` a `js/Date` and reads the current value from `selected`:
 
 ```clojure
-(ns myapp.feature.booking.view
-  (:require ["react-datepicker" :default DatePicker]
-            [bangmod.form.core :as form]
-            [bangmod.form.api :as api]
-            [bangmod.http-api.core :as http-api]
-            [myapp.async :refer [ch->promise]]        ; the two-liner from the quick start
-            [myapp.validators :as v]))
+(:require ["react-datepicker" :default DatePicker])
 
-(defn date-field
-  "A registered field rendered as a react-datepicker. The form holds a js/Date."
-  [form field-name {:keys [date-format] :or {date-format "dd/MM/yyyy"} :as opts}]
-  (let [{:keys [value] :as props}
-        (api/register-field form field-name
-                            (assoc (dissoc opts :date-format)
-                                   ;; a js/Date (or nil), not an event
-                                   :on-change #(api/change-field-value form field-name %)))]
-    [:> DatePicker (-> props
-                       (dissoc :value :type)          ; DatePicker: `selected`, no `type`
-                       (assoc :selected value
-                              :date-format date-format ; a date-fns pattern
-                              :placeholder-text (.toUpperCase date-format)))]))
-
-(defn booking-form-card []
-  (let [booking (form/create-form :booking {:initial-values {:check-in (js/Date.)}})
-        on-submit (form/create-form-submission booking [_ {:keys [check-in nights]} dispatch]
-                    (dispatch (-> (ch->promise (http-api/raw-execute :booking :create
-                                                 {:params {:check-in (.toISOString check-in)
-                                                           :nights   nights}}))
-                                  (.then (fn [{:keys [success? data]}]
-                                           (when-not success? (get-in data [:response :message])))))))]
-    (fn []
-      [:form {:on-submit on-submit}
-       [:div.form-group
-        [:label {:for "check-in"} "Check-in"]
-        [date-field booking :check-in {:id "check-in" :validators [v/required]
-                                       :date-format "dd MMM yyyy"}]
-        (when-let [err (api/get-field-display-error booking :check-in)] [:p.error-text err])]
-       [:div.form-group
-        [:label {:for "nights"} "Nights"]
-        [:input.input (api/register-field booking :nights {:id "nights" :type "number"
-                                                            :validators [v/required]})]]
-       [:button.btn.btn-primary {:type "submit" :disabled (api/get-is-submitting booking)}
-        "Book"]])))
+[:> DatePicker (api/register-field form :submit-date
+                 {:date-format "dd/MM/yyyy"
+                  :selected    (api/get-field-display-value form :submit-date)
+                  :on-change   #(api/change-field-value form :submit-date %)})]
 ```
 
-What carries over unchanged from `register-field` is the point: `:on-blur` (validate),
-`:on-focus` (touch) and `:id` spread onto the picker as they would onto an `<input>` —
-reagent's `:>` turns them into `onBlur`/`onFocus`/`id`. Only the two props whose *shape*
-differs are remapped: the value goes in as `selected`, and `:on-change` receives the date
-itself. The form stores whatever the control hands over — a `js/Date` here — so initial
-values are `js/Date`s too, and the submission body is where it becomes a string.
+The form holds a `js/Date` (so an initial value for the field is a `js/Date` too — format
+it in the submission body). `:on-blur`/`:on-focus`/`:id` reach the picker as they would an
+`<input>`; the `:value` it also receives is that same `js/Date`, which react-datepicker
+ignores (it only honours a string `value`).
 
 ## Gotchas
 

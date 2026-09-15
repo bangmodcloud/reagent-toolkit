@@ -137,6 +137,78 @@ library's):
 slot, so a `raw-execute` from an event handler also refreshes every component bound to the
 endpoint's reaction.
 
+## `subscribe` / `unsubscribe!`: the stream with callbacks
+
+`execute` on an `:sse` endpoint is `subscribe` with no callbacks. Call `subscribe` yourself
+when you want to *react* to the stream — re-fetch something on every message, dispatch into
+re-frame, log drops — rather than only render its latest frame:
+
+```clojure
+(http-api/subscribe :account :changes
+  {:on-open    (fn [] (load-ledger!))               ; every (re)connection, incl. the first
+   :on-message (fn [acct]                           ; one parsed frame
+                 (rf/dispatch [:account/set acct])
+                 (load-ledger!))
+   :on-error   (fn [msg] (js/console.warn "stream:" msg))
+   :events     ["changed"]})                        ; named SSE events to treat as messages
+```
+
+`opts`: `:path-params` / `:params` as for a request (the token rides along as
+`?access_token=`), plus
+
+- `:on-open` — 0-arg, on **every** connection including the first. This is where a full
+  re-fetch of dependent data belongs: the server subscribes before writing its first byte,
+  so nothing can slip between that fetch and the stream, and a reconnect replays the same
+  fetch so nothing missed while disconnected stays missed.
+- `:on-message` — 1-arg, the frame's `data` parsed as JSON (keywordized), or the raw string
+  if it isn't JSON.
+- `:on-error` — 1-arg, a message string; the connection dropped. Reconnect is not your job.
+- `:events` — the SSE `event:` names delivered to `:on-message`, default `["changed"]`.
+  Unnamed frames always arrive; a frame the server sends under any other name is ignored,
+  so this must match what the server emits.
+
+It returns the subscription handle. Deref it for the stream's state —
+`{:sse? true :connected? bool :data <latest frame> :message-count n :error <msg or nil>}` —
+and pass it to `unsubscribe!` when the component goes:
+
+```clojure
+(defn account-page []
+  (r/with-let [live (http-api/subscribe :account :changes
+                      {:on-open (fn [] (load-ledger!))
+                       :on-message (fn [acct] (rf/dispatch [:account/set acct]) (load-ledger!))})]
+    [:div (:name (:data @live))
+     (when-not (:connected? @live) [:span "reconnecting…"])]
+    (finally (http-api/unsubscribe! live))))
+```
+
+(`r/create-class` with `:component-did-mount` / `:component-will-unmount` works the same
+way — subscribe in the one, `unsubscribe!` in the other.) The same slot backs
+`get-data-reaction` and, after `init`, `[:_http-api :data api endpoint]` in the app-db, so
+a component elsewhere can render the stream without holding the handle. `:message-count`
+exists because two consecutive frames can be equal (a snapshot resent after a reconnect) and
+a reaction over an equal value does not re-fire.
+
+`(unsubscribe! handle)` closes the `EventSource` and cancels any pending reconnect. It is
+safe on an already-closed handle and a no-op on anything that isn't a subscription — the
+reaction `execute` returns for a request, `nil` — so cleanup code can pass whatever it was
+handed.
+
+### Reconnecting
+
+Owned by the library, not your code. When the browser's `EventSource` gives up (a non-200
+status, a wrong `Content-Type` — a 401, a 503) the subscription re-opens on a backoff of
+1 s doubling to a 30 s cap, re-reading the token from `set-auth-token-provider!` each time;
+while `EventSource` is still retrying on its own (the server's `retry:` field) nothing is
+done but reporting the drop to `:on-error`. `:on-open` fires again on success, which is why
+the re-fetch belongs there.
+
+The server can also end a connection on purpose by sending a `reconnect` event whose data
+is `{"reason": "..."}` — a connection deadline, load shedding. The client re-opens on the
+same backoff (1 s after a healthy connection); the server's first frame on the new connection is the current state, so what
+was missed is replaced, not replayed. One reason is special: `"token-stale"` goes through
+`set-token-stale-handler!`'s reload first, because re-opening with the same refused token
+would loop.
+
 ## Gotchas
 
 - **`:on-open` fires on every reconnect, not just the first — treat it as "do a full

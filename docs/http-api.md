@@ -126,94 +126,12 @@ Attach a bearer token to every request automatically, once at boot:
 - `:response-format` — `:json`, `:text`, `:transit`, `:raw`.
 - `:timeout` — ms, default `10000`.
 
-## Real-world example
-
-Declaring an API mixing GET, POST and SSE:
-
-```clojure
-(ns myapp.api.account
-  "Owner-facing account calls. Reads hit `/api/query/{projection}`, writes hit
-   `/api/commands/{aggregate}/{command}` with the target id in the body."
-  (:require [bangmod.http-api.core :refer [defapi]]
-            [myapp.config :as config]))
-
-(defn init []
-  (defapi :account
-    {:base-url config/API_BASE_URL}
-    {:get        {:method :get  :uri "/api/query/account-projection/me"
-                  :response-format :json}
-     :ledger     {:method :get  :uri "/api/query/account-projection/me/ledger"
-                  :response-format :json}
-     :changes    {:method :sse  :uri "/api/query/account-projection/me"} ; same URI as :get
-     :auto-renew {:method :post :uri "/api/commands/account/auto-renew"
-                  :request-format :json :response-format :json}}))
-```
-
-`raw-execute`, in a go block, success/failure handled explicitly:
-
-```clojure
-(ns myapp.feature.account.event
-  (:require [cljs.core.async :as a]
-            [re-frame.core :as rf]
-            [bangmod.http-api.core :as http-api]
-            [myapp.api.response :as response]))
-
-(defn load-account!
-  ([] (load-account! nil))
-  ([on-done]
-   (a/go
-     (let [res (a/<! (http-api/raw-execute :account :get))]
-       (if (:success? res)
-         (let [account (response/payload res)]
-           (rf/dispatch [:account/set account])
-           (when on-done (on-done account)))
-         (do (rf/dispatch [:account/set-error (response/error-message res)])
-             (when on-done (on-done nil))))))))
-```
-
-`response/payload`/`response/error-message` are small app-side helpers around `:data` (not
-part of this library) — `payload` is `(:data res)` on success, `error-message` picks a
-message out of the cljs-ajax error map on failure.
-
-`subscribe`/`unsubscribe!` in a component's lifecycle — the pattern that matters most for SSE:
-
-```clojure
-(ns myapp.feature.account.view
-  (:require [reagent.core :as r]
-            [re-frame.core :as rf]
-            [bangmod.http-api.core :as http-api]
-            [myapp.feature.account.event :refer [load-account! load-ledger!]]))
-
-(defn account-page []
-  (let [changes-sub (r/atom nil)]
-    (r/create-class
-     {:component-did-mount
-      (fn [_]
-        (load-account!)
-        (load-plans!)                    ; a sibling load, same pattern as load-account!
-        (reset! changes-sub
-                (http-api/subscribe :account :changes
-                                     {:on-open (fn [] (load-ledger!))
-                                      :on-message (fn [acct]
-                                                    (rf/dispatch [:account/set acct])
-                                                    (load-ledger!))})))
-      :component-will-unmount
-      (fn []
-        (http-api/unsubscribe! @changes-sub)
-        (reset! changes-sub nil))
-      :reagent-render
-      (fn []
-        (let [acct @(rf/subscribe [:account/data])]
-          [:div "..."]))})))
-```
-
 ## Gotchas
 
 - **`:on-open` fires on every reconnect, not just the first — treat it as "do a full
   re-fetch now."** The server subscribes before writing its first byte, so there's no gap
-  between the `execute` snapshot and the stream. Loading dependent data (`load-ledger!`
-  above) from `:on-open` rather than once on mount is what keeps it correct across a
-  reconnect.
+  between the `execute` snapshot and the stream. Loading dependent data from `:on-open`
+  rather than once on mount is what keeps it correct across a reconnect.
 - **Always pair `subscribe` (or `execute` on an `:sse` endpoint) with `unsubscribe!`** in
   `component-will-unmount` / `with-let`'s `finally` — a subscription that outlives its
   component leaks a connection and a pending reconnect timer.
@@ -221,6 +139,5 @@ message out of the cljs-ajax error map on failure.
   reload. With no `set-token-stale-handler!` registered, the 401 just reaches your callback
   like any other failure.
 - **`raw-execute` on an `:sse` endpoint (and `subscribe` on anything else) throws
-  immediately**,
-  naming the mismatch, rather than failing somewhere inside the transport.
+  immediately**, naming the mismatch, rather than failing somewhere inside the transport.
 - **`:headers` on a call overrides the auto-injected `:authorization`**, not merges under it.

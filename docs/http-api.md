@@ -64,33 +64,6 @@ The SSE handle derefs to `{:sse? true :connected? bool :data <latest frame> :mes
 :error <message or nil>}`; `unsubscribe!` on anything that isn't a subscription is a no-op,
 so the `finally` line is the same whichever method the endpoint has.
 
-### `raw-execute`: the request as a value
-
-When you need *this* request's result — a go block, an event handler, an error branch, a
-form submission — `raw-execute` returns a `core.async` channel delivering exactly one map:
-`{:success? true :data <parsed response body>}` on success, or
-`{:success? false :data <cljs-ajax error map>}` on failure (that shape — `:status`,
-`:response`, ... — is [cljs-ajax's](https://github.com/JulianBirch/cljs-ajax), not this
-library's):
-
-```clojure
-(ns myapp.feature.account.event
-  (:require [cljs.core.async :as a]
-            [re-frame.core :as rf]
-            [bangmod.http-api.core :as http-api]))
-
-(defn load-account! []
-  (a/go
-    (let [res (a/<! (http-api/raw-execute :account :get))]
-      (if (:success? res)
-        (rf/dispatch [:account/set (:data res)])
-        (rf/dispatch [:account/set-error (:data res)])))))
-```
-
-`execute` is exactly `raw-execute` followed by `get-data-reaction`; both update the same
-slot, so a `raw-execute` from an event handler also refreshes every component bound to the
-endpoint's reaction.
-
 ### Auth
 
 Attach a token to every request automatically, once at boot:
@@ -136,6 +109,33 @@ a token:
 - `:request-format` — `:json`, `:url`, `:transit`, `:raw`.
 - `:response-format` — `:json`, `:text`, `:transit`, `:raw`.
 - `:timeout` — ms, default `10000`.
+
+## `raw-execute`: the request as a value
+
+When you need *this* request's result — a go block, an event handler, an error branch, a
+form submission — `raw-execute` returns a `core.async` channel delivering exactly one map:
+`{:success? true :data <parsed response body>}` on success, or
+`{:success? false :data <cljs-ajax error map>}` on failure (that shape — `:status`,
+`:response`, ... — is [cljs-ajax's](https://github.com/JulianBirch/cljs-ajax), not this
+library's):
+
+```clojure
+(ns myapp.feature.account.event
+  (:require [cljs.core.async :as a]
+            [re-frame.core :as rf]
+            [bangmod.http-api.core :as http-api]))
+
+(defn load-account! []
+  (a/go
+    (let [res (a/<! (http-api/raw-execute :account :get))]
+      (if (:success? res)
+        (rf/dispatch [:account/set (:data res)])
+        (rf/dispatch [:account/set-error (:data res)])))))
+```
+
+`execute` is exactly `raw-execute` followed by `get-data-reaction`; both update the same
+slot, so a `raw-execute` from an event handler also refreshes every component bound to the
+endpoint's reaction.
 
 ## Gotchas
 

@@ -18,6 +18,9 @@ released at the same version number.
   and the `create-*-submission-result` helpers remain as the lower-level path.
 - **form:** `api/start-submission` — the validate-and-mark-submitting gate both submit paths
   share; returns the values map, or `nil` when it refused.
+- **http-api:** `set-auth-token-injector!` — `(fn [request token] -> request)` deciding where
+  the provider's token goes on a request. The default, `bangmod.http-api.auth/bearer-injector`,
+  is the previous behaviour (`Authorization: Bearer`, explicit header wins); `nil` restores it.
 
 ### Changed
 

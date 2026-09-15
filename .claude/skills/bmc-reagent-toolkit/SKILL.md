@@ -109,9 +109,15 @@ placeholders, values percent-encoded), `:request-format` / `:response-format`
 - `(http-api/unsubscribe! handle)` — ALWAYS call in `component-will-unmount` / `with-let`'s
   `finally`. The handle derefs to `{:sse? true :connected? bool :data <latest frame>
   :message-count n :error msg-or-nil}`. No-op on a non-subscription (a plain reaction, nil).
-- `(http-api/set-auth-token-provider! (fn [] @auth/access-token))` — once at boot; injects
-  `Bearer` on every request without an explicit `:authorization` header. SSE gets the token
-  as `?access_token=` (EventSource cannot set headers).
+- `(http-api/set-auth-token-provider! (fn [] @auth/access-token))` — once at boot; the
+  token is injected on every request — by default as `Authorization: Bearer <token>`,
+  unless the call passes its own `:authorization` header. SSE gets the token as
+  `?access_token=` (EventSource cannot set headers).
+- `(http-api/set-auth-token-injector! (fn [request token] ...))` — override WHERE the token
+  goes: a fn over the finished cljs-ajax request map (`:uri :method :params :headers`),
+  returning the new map; e.g. `(assoc-in request [:headers :x-api-key] token)` or
+  `(assoc-in request [:params :access_token] token)`. Only called when the provider returned
+  a token; `nil` restores the Bearer default. HTTP only, not SSE.
 - `(http-api/set-token-stale-handler! f)` — `f` returns a channel that closes when a fresh
   token is loaded; a 401 whose body is `{:reason "token-stale"}` triggers ONE reload+retry,
   shared across concurrent requests.

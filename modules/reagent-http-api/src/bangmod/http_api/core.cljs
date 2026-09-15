@@ -133,10 +133,28 @@
   (internal/unsubscribe! handle))
 
 (defn set-auth-token-provider!
-  "Register a 0-arg fn returning the current bearer token (or nil). Every
-   request without an explicit :authorization header will get one injected."
+  "Register a 0-arg fn returning the current access token (or nil). Whenever it returns
+   one, the token injector (default: `Authorization: Bearer <token>`, unless the call set
+   its own :authorization header) puts it on the request. Read fresh for every attempt,
+   so a retry after a token reload carries the new token. SSE streams get it as
+   `?access_token=` — EventSource cannot set headers."
   [f]
   (internal/set-auth-token-provider! f))
+
+(defn set-auth-token-injector!
+  "Register how the token from `set-auth-token-provider!` goes onto a request:
+   `(fn [request token] -> request)`, over the finished cljs-ajax request map
+   (:uri :method :params :headers ...), called only when the provider returned a token.
+   The default is `bangmod.http-api.auth/bearer-injector`; pass nil to restore it.
+
+     ;; token as a custom header
+     (set-auth-token-injector! (fn [req token] (assoc-in req [:headers :x-api-key] token)))
+     ;; token as a query param
+     (set-auth-token-injector! (fn [req token] (assoc-in req [:params :access_token] token)))
+
+   HTTP requests only — an SSE stream's URL always carries `?access_token=`."
+  [f]
+  (internal/set-auth-token-injector! f))
 
 (defn set-token-stale-handler!
   "Register a 0-arg fn returning a channel, called when the server refuses a request's token

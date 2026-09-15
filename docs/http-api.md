@@ -93,10 +93,20 @@ endpoint's reaction.
 
 ### Auth
 
-Attach a bearer token to every request automatically, once at boot:
+Attach a token to every request automatically, once at boot:
 
 ```clojure
 (http-api/set-auth-token-provider! (fn [] @auth/access-token))
+```
+
+By default it goes out as `Authorization: Bearer <token>` (a call that sets its own
+`:authorization` header keeps it). If your API wants the token somewhere else, register an
+injector — a function over the finished request map, called whenever the provider returned
+a token:
+
+```clojure
+(http-api/set-auth-token-injector!
+  (fn [request token] (assoc-in request [:headers :x-api-key] token)))
 ```
 
 ## API reference
@@ -110,7 +120,8 @@ Attach a bearer token to every request automatically, once at boot:
 | `(raw-execute api-name endpoint-name opts?)` | Fires one request, returns a channel with `{:success? bool :data ...}`. `opts`: `:path-params` (fills `:param` in the URI), `:params` (query/body), `:headers` (overrides the auto-injected token for that call). The reaction/re-frame slot keeps the last successful `:data` across failures — a failed call sets `:success? false` and puts the failure under `:error` there. |
 | `(subscribe api-name endpoint-name opts)` | Opens a live subscription against an `:sse` endpoint, returns a handle that derefs to `{:sse? true :connected? bool :data <latest frame> :message-count n :error msg-or-nil}`. `opts`: `:path-params`, `:params`, `:on-open` (0-arg, every reconnect including the first — see Gotchas), `:on-message` (1-arg, parsed frame data), `:on-error` (1-arg, message string), `:events` (extra named SSE event types delivered to `:on-message`, default `["changed"]` — unnamed frames always arrive). |
 | `(unsubscribe! handle)` | Closes the connection, cancels any pending reconnect. Safe on an already-closed handle; a no-op on anything that isn't a subscription (a plain-request reaction, `nil`), so a component can pass whatever `execute` returned. |
-| `(set-auth-token-provider! f)` | Registers a 0-arg fn returning the bearer token (or `nil`), injected into every request lacking an explicit `:authorization` header, rebuilt fresh on every retry. |
+| `(set-auth-token-provider! f)` | Registers a 0-arg fn returning the access token (or `nil`); whenever it returns one, the injector puts it on the request. Read fresh on every attempt, so a retry after a token reload carries the new token. SSE streams get it as `?access_token=`. |
+| `(set-auth-token-injector! f)` | Registers `(fn [request token] -> request)` — how the token goes onto the cljs-ajax request map (`:uri :method :params :headers ...`). Default `bangmod.http-api.auth/bearer-injector`: `Authorization: Bearer <token>` unless the call set `:authorization` itself. `nil` restores the default. HTTP requests only. |
 | `(set-token-stale-handler! f)` | Registers a 0-arg fn returning a channel, called when a 401 carries `{:reason "token-stale"}`. Retried exactly once after the handler's channel closes; concurrent stale requests share one reload. No handler registered ⇒ the 401 passes through unchanged. |
 | `(init)` | Wires re-frame integration: every response/SSE update mirrors into `[:_http-api :data]` in the app-db. Optional — `execute`/`raw-execute`/`subscribe`/`get-data-reaction` work without it. |
 | `(get-data-reaction api-name endpoint-name)` | Reagent reaction over an endpoint's stored slot, without firing anything: `@(http-api/get-data-reaction :account :get)`. `nil` before the first response. Throws if the endpoint was never declared. |

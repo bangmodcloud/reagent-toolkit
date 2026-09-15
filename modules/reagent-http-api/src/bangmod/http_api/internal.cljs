@@ -1,6 +1,7 @@
 (ns bangmod.http-api.internal
   (:require [ajax.core :as ajax]
             [bangmod.http-api.retry :as retry]
+            [bangmod.http-api.auth :as auth]
             [bangmod.http-api.sse :as sse]
             [reagent.core :as r]
             [clojure.core.async :as a]
@@ -12,14 +13,23 @@
 (defonce a-data (r/atom {}))
 (defonce a-reactions (r/atom {}))
 
-;; Optional provider fn returning the current bearer token (or nil). When set,
-;; every request without an explicit :authorization header gets one injected.
+;; Optional provider fn returning the current token (or nil). When it returns one, the
+;; injector below puts it on every request.
 (defonce auth-token-provider (atom nil))
+
+;; `(fn [request token] -> request)` — how the token gets onto a request map. Default:
+;; `Authorization: Bearer`, explicit header wins. Only ever called with a non-nil token.
+(defonce auth-token-injector (atom auth/bearer-injector))
 
 (defn set-auth-token-provider!
   "Registers a 0-arg fn that returns the current access token (or nil)."
   [f]
   (reset! auth-token-provider f))
+
+(defn set-auth-token-injector!
+  "Registers `(fn [request token] -> request)`; nil restores the Bearer default."
+  [f]
+  (reset! auth-token-injector (or f auth/bearer-injector)))
 
 (defn- build-request-map
   "Build an ajax-compatible request map from an endpoint spec and runtime options.
@@ -41,9 +51,6 @@
         {:keys [method uri request-format response-format timeout with-credentials]} endpoint-spec
         {:keys [path-params params headers]} opts
         token (when-let [provider @auth-token-provider] (provider))
-        final-headers (cond-> (or headers {})
-                        (and token (not (contains? (or headers {}) :authorization)))
-                        (assoc :authorization (str "Bearer " token)))
         full-uri (str (or base-url "")
                       (sse/replace-path-params uri path-params))
         req-format (case request-format
@@ -63,10 +70,13 @@
              :method          (or method :get)
              :timeout         (or timeout 10000)
              :response-format resp-format}
-      req-format          (assoc :format req-format)
-      params              (assoc :params params)
-      (seq final-headers) (assoc :headers final-headers)
-      with-credentials    (assoc :with-credentials true))))
+      req-format       (assoc :format req-format)
+      params           (assoc :params params)
+      (seq headers)    (assoc :headers headers)
+      with-credentials (assoc :with-credentials true)
+      ;; Last, over the finished map, so an injector can put the token anywhere — a
+      ;; header, a query param, a cookie flag — not just where the default does.
+      token            (@auth-token-injector token))))
 
 (defn make-reaction
   [api-name]

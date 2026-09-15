@@ -47,6 +47,10 @@
 
 ;; --- the `a-data` value, which `make-reaction` REPLACES ----------------------
 ;;
+;; `:data` is the latest frame, under the same key an `execute` slot uses for its body, so a
+;; component bound to `(:data @x)` reads the same way whether `x` came from a request or a
+;; stream. `:last-message` is the same value under its older name.
+;;
 ;; `:message-count` is the field that earns its place: two consecutive messages can be `=` (a
 ;; snapshot resent after a reconnect, or a value that changed and changed back), and a
 ;; reaction over an equal value does not re-fire — without the counter that second message
@@ -54,12 +58,13 @@
 ;; the alternative and grows without bound on a long-lived connection.
 
 (defn initial-state []
-  {:sse? true :connected? false :last-message nil :message-count 0 :error nil})
+  {:sse? true :connected? false :data nil :last-message nil :message-count 0 :error nil})
 
 (defn apply-message [state data]
   (assoc (or state (initial-state))
          :sse? true
          :connected? true
+         :data data
          :last-message data
          :message-count (inc (:message-count state 0))
          :error nil))

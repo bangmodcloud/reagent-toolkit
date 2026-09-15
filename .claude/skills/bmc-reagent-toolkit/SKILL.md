@@ -92,13 +92,23 @@ placeholders, values percent-encoded), `:request-format` / `:response-format`
 `:with-credentials`. `:_options` is reserved — never an endpoint name.
 
 - `(http-api/execute :account :get)` / `(execute api ep {:path-params {:id 7} :params {...}
-  :headers {...}})` — returns a core.async channel delivering ONE map:
+  :headers {...}})` — fires the request and returns the endpoint's REACTION (it is
+  `raw-execute` + `get-data-reaction`). On an `:sse` endpoint it opens the stream instead
+  (opts as for `subscribe`) and returns the subscription handle, which derefs the same way.
+  Either way `(:data @x)` is the latest body/frame. The component pattern — fires once on
+  mount, deref in the body, close on unmount (a no-op for a plain request):
+  `(r/with-let [x (http-api/execute :api :ep)] [:div (:data @x)] (finally (http-api/unsubscribe! x)))`.
+  Never call it inside a render fn — that re-fires / re-opens on every render.
+- `(http-api/raw-execute ...)` — same args, returns a core.async channel delivering ONE map:
   `{:success? true :data <parsed body>}` or `{:success? false :data <cljs-ajax error map>}`
-  (failure `:data` has `:status`, `:response`, ...). Always take with `a/<!` in a `go`.
+  (failure `:data` has `:status`, `:response`, ...). Always take with `a/<!` in a `go`. Use
+  it when you need THIS request's result as a value (dispatch on success, error branch).
 - `(http-api/subscribe :account :changes {:on-open #(...) :on-message (fn [data] ...)
   :on-error (fn [msg] ...) :events ["changed"]})` — SSE endpoints only; returns a handle.
   `:events` lists extra named SSE event types treated as messages (default `["changed"]`).
-- `(http-api/unsubscribe! handle)` — ALWAYS call in `component-will-unmount`.
+- `(http-api/unsubscribe! handle)` — ALWAYS call in `component-will-unmount` / `with-let`'s
+  `finally`. The handle derefs to `{:sse? true :connected? bool :data <latest frame>
+  :message-count n :error msg-or-nil}`. No-op on a non-subscription (a plain reaction, nil).
 - `(http-api/set-auth-token-provider! (fn [] @auth/access-token))` — once at boot; injects
   `Bearer` on every request without an explicit `:authorization` header. SSE gets the token
   as `?access_token=` (EventSource cannot set headers).
@@ -106,8 +116,12 @@ placeholders, values percent-encoded), `:request-format` / `:response-format`
   token is loaded; a 401 whose body is `{:reason "token-stale"}` triggers ONE reload+retry,
   shared across concurrent requests.
 - `(http-api/init)` — optional; mirrors all data into re-frame app-db at `[:_http-api :data]`.
-- `@(http-api/get-data-reaction :account :get)` — reaction over the endpoint's latest
-  result; throws if the endpoint was never declared.
+- `@(http-api/get-data-reaction :account :get)` — the same reaction `execute` returns, without
+  firing anything. It is the endpoint's stored slot, NOT the last call: `nil` before the first
+  response, `{:success? true :data <body>}` after a success, and after a failed call that same
+  map with `:success? false` and `:error <failure data>` merged in, so the last good `:data`
+  survives. Bind the UI to `(:data @reaction)`; read failure detail off the `raw-execute`
+  channel result, never off the reaction. Throws if the endpoint was never declared.
 
 ### The canonical SSE pattern
 
@@ -139,7 +153,8 @@ snapshot and stream):
 - The data slot (reaction / app-db) keeps the last successful `:data` across failures — a
   failed call sets `:success? false` and puts the failure under `:error` there. The channel
   result is the raw failure either way.
-- `execute` on an `:sse` endpoint throws, as does `subscribe` on a non-`:sse` one.
+- `raw-execute` on an `:sse` endpoint throws, as does `subscribe` on a non-`:sse` one.
+  `execute` accepts both.
 - Passing `:headers {:authorization ...}` replaces the auto-injected token for that call.
 - The SSE reconnect protocol is a server contract: a `reconnect` event whose data is
   `{:reason "..."}` — reason `"token-stale"` reloads the token before re-opening; any other

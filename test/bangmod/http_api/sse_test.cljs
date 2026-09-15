@@ -29,7 +29,11 @@
 
 (deftest state-transitions-test
   (let [s0 (sse/initial-state)]
-    (is (= {:sse? true :connected? false :last-message nil :message-count 0 :error nil} s0))
+    (is (= {:sse? true :connected? false :data nil :last-message nil :message-count 0 :error nil}
+           s0))
+
+    (testing "the latest frame lands under :data, same key as an execute slot"
+      (is (= {:x 1} (:data (sse/apply-message s0 {:x 1})))))
 
     (testing "message-count increments even when the payload repeats"
       (let [s1 (sse/apply-message s0 {:x 1})

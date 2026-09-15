@@ -49,6 +49,10 @@ Clicking a link swaps the panel's content without a page load — pushy intercep
 same-origin `<a href>`s and pushes history instead. A URL nothing matches renders
 `:default-component`.
 
+`register-routes` can be called as many times as you like, so you don't have to keep one
+big table: split the routes by feature or module and let each one register its own — see
+[One table per feature](#one-table-per-feature).
+
 ## Route tables
 
 A route table is a bidi table with one change: **a leaf is `[handler-keyword component]`**,

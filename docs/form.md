@@ -143,7 +143,7 @@ taking the form as its first argument: `(api/register-field form :email {...})`.
 | `(validate-field form field-name)` | Re-runs validators against the current value. |
 | `(touch form field-name)` | Marks touched (so its error becomes visible) and validates, without changing value. |
 | `(get-all-fields-errors form)` | `({:field name :error err} ...)` for every field currently in error. |
-| `(get-form-values form)` | A plain map of every field's current raw value — the same map a submission body receives as `values`, available any time, not just at submit. |
+| `(get-form-values form)` | A plain map of every field's current raw value — the same map a submission body receives as `values`, available any time, not just at submit. A field nobody has touched yet reads `nil` here, not its initial value (`touch` copies the initial value in; a submit touches everything first). |
 | `(validate-all-fields form)` | Touches and validates every field, returns the first error found (or `nil`). The same check a submit runs, without submitting — a "can I move to the next wizard step" check. |
 | `(get-initial-values form)` | The form's `:initial-values`, as given to `create-form`. |
 | `(get-is-submitting form)` | `true` while a submission is in flight. |
@@ -272,90 +272,135 @@ render `forms` (a vector of sub-forms) yourself:
     [:button {:type "button" :on-click #(add-fn {:qty 1})} "+ Add item"]])]
 ```
 
-`:element-removal-strategy` (default `:both`, or `:element-only`) controls how a removed
-element's slot is treated against `:initial-values` on re-render.
+On the parent, the array is one field: `(api/get-form-values parent)` gives `:items` as a
+vector of row maps, and the field's validator runs `validate-all-fields` on every row, so a
+row error blocks the parent's submit and surfaces as
+`(api/get-field-display-error parent :items)` (the first row's first error). Values passed
+to `add-fn` are set through `change-field-value`, i.e. as touched values, not as initial
+values — a validator on such a field runs right away.
+
+### Rows and `:initial-values`
+
+The parent's `:initial-values` for the array's name is a vector of row maps. On render the
+array makes sure there is at least one row per entry — `[{...} {...} {...}]` shows up as
+three rows, each sub-form reading its own map as its initial values — and any rows added
+past that start empty (or from what you gave `add-fn`).
+
+That "at least one row per entry" is a live rule, re-checked on every render, which is what
+makes `:initial-values` reactive for arrays: pass a reaction/atom holding the list and rows
+appear as the list grows. It is also why removing a row has two possible meanings, which is
+what `:element-removal-strategy` chooses between.
+
+### Removing rows: `:element-removal-strategy`
+
+`(remove-fn idx)` always drops the sub-form at `idx`. What happens to the initial-values
+entry that row was reading is the strategy:
+
+| Strategy | Who owns the removal | What `remove-fn` does | Use when |
+| --- | --- | --- | --- |
+| `:both` (default) | the array | drops the sub-form **and** hides that entry of `:initial-values` from the array, so the remaining rows keep lining up with their original entries and the slot is not re-filled | `:initial-values` is a plain value (or you never change it yourself); the array's rows *are* the truth until submit |
+| `:element-only` | your code | drops the sub-form only; `:initial-values` is left alone — it is expected to lose that entry itself | `:initial-values` is a reaction over app state you update on removal (deleted on the server, removed from an atom, ...) |
+
+With `:both`, a form created as
+
+```clojure
+(form/create-form :order {:initial-values {:items [{:title "A"} {:title "B"} {:title "C"}]}})
+```
+
+renders A, B, C; `(remove-fn 1)` leaves A and C, and they stay A and C — the array remembers
+that the second entry is gone and does not re-add it from the still-three-entry
+`:initial-values`. Submit produces `{:items [{:title "A"} {:title "C"}]}`.
+
+With `:element-only`, the array removes the sub-form and trusts *you* to shrink the source,
+because the "one row per entry" rule will otherwise put a row straight back:
+
+```clojure
+(defonce items (r/atom [{:title "A"} {:title "B"} {:title "C"}]))
+(form/create-form :order {:initial-values (r/reaction {:items @items})})
+
+[form/FieldArray {:form :order :name :items :element-removal-strategy :element-only}
+ (fn [add-fn remove-fn item-forms]
+   ...
+   [:button {:type "button"
+             :on-click (fn []
+                         (remove-fn idx)
+                         (swap! items #(into (subvec % 0 idx) (subvec % (inc idx)))))}
+    "Remove"]
+   ...)]
+```
+
+Do both in the same handler, synchronously: rows shift to follow their entries by position,
+so if `:initial-values` still has the old entry when the next render runs, the array
+re-fills to the old length — the rows after `idx` show the shifted entries, and an empty
+row appears at the end once your source does shrink. (If the removal is an async server
+call, remove from the local source first and reconcile after; don't wait for the response.)
+
+Mixing them up is the failure mode to know: shrinking the source yourself under `:both`
+removes the entry twice — the array hides one slot *and* the source lost one — so the row
+after the removed one goes blank; leaving the source alone under `:element-only` brings the
+row back.
 
 ## Custom controls (non-native `:on-change`)
 
 The generated `:on-change` reads `(.. event -target -value)` — right for a plain `<input>`,
-not for a control (a date picker, a `react-select`) that hands `:on-change` something else.
-Override it and write straight to form state with `change-field-value`:
+not for a control that hands `:on-change` something else. Override it and write straight to
+form state with `change-field-value`. Here with
+[react-datepicker](https://github.com/Hacker0x01/react-datepicker) (`npm install
+react-datepicker`; its stylesheet is `react-datepicker/dist/react-datepicker.css`), which
+calls `onChange` with a `js/Date` and wants the current value as `selected`, not `value`:
 
 ```clojure
-[date-picker (api/register-field form :start-date
-               {:validators [v/required]
-                :on-change  #(api/change-field-value form :start-date %)})]
-```
-
-## Real-world example
-
-A complete login form: two validated fields, an API-driven error banner, a loading state, and
-a redirect once authentication succeeds (the redirect half on its own, with more context, is
-in [`reagent-router`'s docs](router.md#navigation-and-url-generation) — this is the same
-`login-panel`, in full):
-
-```clojure
-(ns myapp.feature.authentication.view
-  (:require [reagent.core :as r]
-            [re-frame.core :as rf]
-            [clojure.string :as str]
-            [bangmod.router.core :as router]
+(ns myapp.feature.booking.view
+  (:require ["react-datepicker" :default DatePicker]
             [bangmod.form.core :as form]
             [bangmod.form.api :as api]
-            [myapp.feature.authentication.event :as auth]
+            [bangmod.http-api.core :as http-api]
+            [myapp.async :refer [ch->promise]]        ; the two-liner from the quick start
             [myapp.validators :as v]))
 
-(defn- login-form-card [login-form]
-  (let [api-err @(rf/subscribe [:auth/error])
-        loading? @(rf/subscribe [:auth/loading?])
-        on-submit (form/create-form-submission login-form [_ {:keys [email password]} dispatch]
-                    (auth/login! (str/lower-case (str/trim (str email)))
-                                 password "client-app-id")
-                    (dispatch nil))]
-    [:div.login-box
-     (when api-err
-       [:div.banner.banner-danger
-        (cond
-          (str/includes? api-err "disabled") "This account has been disabled. Contact your Administrator."
-          (str/includes? api-err "credentials") "Invalid email or password."
-          :else api-err)])
+(defn date-field
+  "A registered field rendered as a react-datepicker. The form holds a js/Date."
+  [form field-name {:keys [date-format] :or {date-format "dd/MM/yyyy"} :as opts}]
+  (let [{:keys [value] :as props}
+        (api/register-field form field-name
+                            (assoc (dissoc opts :date-format)
+                                   ;; a js/Date (or nil), not an event
+                                   :on-change #(api/change-field-value form field-name %)))]
+    [:> DatePicker (-> props
+                       (dissoc :value :type)          ; DatePicker: `selected`, no `type`
+                       (assoc :selected value
+                              :date-format date-format ; a date-fns pattern
+                              :placeholder-text (.toUpperCase date-format)))]))
 
-     [:form {:on-submit on-submit}
-      [:div.form-group
-       [:label {:for "login-email"} "Email"]
-       [:input.input (api/register-field login-form :email
-                       {:id "login-email" :type "email"
-                        :validators [v/required]
-                        :class (when (api/get-field-display-error login-form :email) "input-error")})]
-       (when-let [err (api/get-field-display-error login-form :email)] [:p.error-text err])]
-
-      [:div.form-group
-       [:label {:for "login-password"} "Password"]
-       [:input.input (api/register-field login-form :password
-                       {:id "login-password" :type "password"
-                        :validators [v/required]
-                        :class (when (api/get-field-display-error login-form :password) "input-error")})]
-       (when-let [err (api/get-field-display-error login-form :password)] [:p.error-text err])]
-
-      [:button.btn.btn-primary {:type "submit" :disabled loading?}
-       (if loading? "Logging in..." "Log in")]]]))
-
-(defn login-panel []
-  (let [login-form (form/create-form :login)
-        user-sub (rf/subscribe [:auth/user])
-        redirect! (fn [] (when @user-sub (router/navigate! :account)))]
-    (r/create-class
-     {:component-did-mount  (fn [_] (redirect!))
-      :component-did-update (fn [_] (redirect!))
-      :reagent-render       (fn [] [login-form-card login-form])})))
+(defn booking-form-card []
+  (let [booking (form/create-form :booking {:initial-values {:check-in (js/Date.)}})
+        on-submit (form/create-form-submission booking [_ {:keys [check-in nights]} dispatch]
+                    (dispatch (-> (ch->promise (http-api/raw-execute :booking :create
+                                                 {:params {:check-in (.toISOString check-in)
+                                                           :nights   nights}}))
+                                  (.then (fn [{:keys [success? data]}]
+                                           (when-not success? (get-in data [:response :message])))))))]
+    (fn []
+      [:form {:on-submit on-submit}
+       [:div.form-group
+        [:label {:for "check-in"} "Check-in"]
+        [date-field booking :check-in {:id "check-in" :validators [v/required]
+                                       :date-format "dd MMM yyyy"}]
+        (when-let [err (api/get-field-display-error booking :check-in)] [:p.error-text err])]
+       [:div.form-group
+        [:label {:for "nights"} "Nights"]
+        [:input.input (api/register-field booking :nights {:id "nights" :type "number"
+                                                            :validators [v/required]})]]
+       [:button.btn.btn-primary {:type "submit" :disabled (api/get-is-submitting booking)}
+        "Book"]])))
 ```
 
-`auth/login!` dispatches the login request and updates `:auth/user`, `:auth/error`,
-`:auth/loading?` asynchronously (typically built on [`reagent-http-api`](http-api.md)) —
-the body dispatches `nil` immediately since, from the form's point of view, "submitting" is
-just "kick off the login"; the redirect is what reacts to it actually completing. (If you'd
-rather the form own the loading and error state, dispatch a promise of the response mapped
-to an error message instead, as in the quick start.)
+What carries over unchanged from `register-field` is the point: `:on-blur` (validate),
+`:on-focus` (touch) and `:id` spread onto the picker as they would onto an `<input>` —
+reagent's `:>` turns them into `onBlur`/`onFocus`/`id`. Only the two props whose *shape*
+differs are remapped: the value goes in as `selected`, and `:on-change` receives the date
+itself. The form stores whatever the control hands over — a `js/Date` here — so initial
+values are `js/Date`s too, and the submission body is where it becomes a string.
 
 ## Gotchas
 

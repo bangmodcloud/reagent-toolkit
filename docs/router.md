@@ -144,7 +144,7 @@ feature is a local change plus one `init` call in `myapp.core`.
 `navigate!` belongs in a lifecycle callback or event handler, not in a render function —
 changing the matched route while a render is still in progress can unmount the very
 component that triggered the navigation. A real use: redirecting away from a login screen
-once auth succeeds (full example in [`reagent-form`'s docs](form.md#real-world-example)):
+once auth succeeds (the form half is [`reagent-form`](form.md)):
 
 ```clojure
 (ns myapp.feature.authentication.view

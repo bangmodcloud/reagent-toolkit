@@ -205,7 +205,13 @@ and `:on-change`/`:on-blur`/`:on-focus` overrides.
 
 The generated `:on-change` reads `(.. e -target -value)` — for custom controls (date
 pickers, selects) that pass a raw value, override it:
-`:on-change #(api/change-field-value form :start-date %)`.
+`:on-change #(api/change-field-value form :start-date %)`. react-datepicker pattern
+(`["react-datepicker" :default DatePicker]`): take `register-field`'s props, `(dissoc :value
+:type)`, `(assoc :selected value :date-format "dd/MM/yyyy")`, render with `[:> DatePicker
+props]` — `:on-blur`/`:on-focus`/`:id` carry over as-is; the form then holds a `js/Date`
+(initial values must be `js/Date` too; stringify in the submission body).
+`get-form-values` reads `nil` for a never-touched field (initial values are copied in by
+`touch`; a submit touches everything).
 
 ### Submitting
 
@@ -258,7 +264,23 @@ Beyond submit: `(api/get-form-values form)` — all raw values as a map, any tim
    ...)]
 ```
 
-`:form` may be the form value or its registry keyword.
+`:form` may be the form value or its registry keyword. On the parent the array is ONE
+field: its value is a vector of row maps, and the first row error becomes the field's error
+(blocks submit). `add-fn`'s map is applied as touched values (validators run at once), not
+as initial values.
+
+FieldArray rows follow the parent's `:initial-values` for `:name` (a vector of row maps):
+every render ensures at least one row per entry, so a reactive `:initial-values` grows the
+array live. `:element-removal-strategy` decides what `(remove-fn idx)` means:
+- `:both` (default) — array owns removal: drops the sub-form AND hides that initial-values
+  entry, so the remaining rows keep their entries and nothing is re-added. Use with a plain
+  `:initial-values` you never shrink yourself.
+- `:element-only` — YOUR code owns removal: drops the sub-form only; you must remove the
+  entry from the reactive `:initial-values` source in the SAME handler, synchronously
+  (`(remove-fn idx) (swap! items remove-nth idx)`), or the "one row per entry" rule puts the
+  row back / shifts later rows.
+Never do both (shrink the source under `:both` → the next row goes blank); never do
+neither (`:element-only` without shrinking → row comes back).
 
 ### Performance model (why big forms stay fast)
 

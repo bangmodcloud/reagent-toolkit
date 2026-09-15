@@ -12,7 +12,7 @@ use — take `reagent-router` without dragging in a form library or an HTTP clie
 | `io.github.bangmodcloud/reagent-http-api` | `bangmod.http-api.*` | Declarative HTTP + SSE client, GET and live-stream on one URI | [docs/http-api.md](docs/http-api.md) |
 | `io.github.bangmodcloud/reagent-router`   | `bangmod.router.*`   | bidi + pushy routing, each feature registers its own routes   | [docs/router.md](docs/router.md)     |
 
-Each doc covers its module on its own: a quick start, the full API, a real-world example, and
+Each doc covers its module on its own: a quick start, the full API, worked examples, and
 the gotchas worth knowing before you rely on it.
 
 ## 30-second tour

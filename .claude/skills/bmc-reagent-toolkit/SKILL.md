@@ -6,14 +6,14 @@ description: Use when writing ClojureScript code against the reagent-toolkit lib
 # reagent-toolkit (bangmod.form / bangmod.http-api / bangmod.router)
 
 Three independent ClojureScript libraries for Reagent/re-frame apps. This skill targets
-**0.4.0**. Docs live in `docs/{form,http-api,router}.md` of
+**0.5.0**. Docs live in `docs/{form,http-api,router}.md` of
 https://github.com/bangmodcloud/reagent-toolkit — trust this skill for signatures; read the
 source under `modules/*/src/bangmod/` only when something here doesn't cover it.
 
 ```clojure
-{:deps {io.github.bangmodcloud/reagent-form     {:mvn/version "0.4.0"}
-        io.github.bangmodcloud/reagent-http-api {:mvn/version "0.4.0"}
-        io.github.bangmodcloud/reagent-router   {:mvn/version "0.4.0"}}}
+{:deps {io.github.bangmodcloud/reagent-form     {:mvn/version "0.5.0"}
+        io.github.bangmodcloud/reagent-http-api {:mvn/version "0.5.0"}
+        io.github.bangmodcloud/reagent-router   {:mvn/version "0.5.0"}}}
 ```
 
 They do not depend on each other — add only what the task needs.
@@ -103,6 +103,9 @@ placeholders, values percent-encoded), `:request-format` / `:response-format`
   `{:success? true :data <parsed body>}` or `{:success? false :data <cljs-ajax error map>}`
   (failure `:data` has `:status`, `:response`, ...). Always take with `a/<!` in a `go`. Use
   it when you need THIS request's result as a value (dispatch on success, error branch).
+- File upload: `(http-api/raw-execute :document :upload {:body (doto (js/FormData.) (.append "file" f))})`
+  — `:body` is sent AS-IS: no `:request-format`, no Content-Type (the browser writes the
+  multipart boundary). It wins over `:params`. Keep `:params` for JSON bodies.
 - `(http-api/subscribe :account :changes {:on-open #(...) :on-message (fn [data] ...)
   :on-error (fn [msg] ...) :events ["changed"]})` — SSE endpoints only; returns a handle.
   `:events` lists extra named SSE event types treated as messages (default `["changed"]`).
@@ -121,6 +124,10 @@ placeholders, values percent-encoded), `:request-format` / `:response-format`
 - `(http-api/set-token-stale-handler! f)` — `f` returns a channel that closes when a fresh
   token is loaded; a 401 whose body is `{:reason "token-stale"}` triggers ONE reload+retry,
   shared across concurrent requests.
+- `(http-api/set-unauthorized-handler! (fn [result] ...))` — once at boot, in the auth
+  feature; called for every 401 that is NOT `token-stale` (session over: forget the token,
+  navigate to login). The caller's channel still gets the 401 too, so loaders keep their own
+  error branch and never route to login themselves. HTTP only, not SSE.
 - `(http-api/init)` — optional; mirrors all data into re-frame app-db at `[:_http-api :data]`.
 - `@(http-api/get-data-reaction :account :get)` — the same reaction `execute` returns, without
   firing anything. It is the endpoint's stored slot, NOT the last call: `nil` before the first

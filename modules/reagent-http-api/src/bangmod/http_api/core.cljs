@@ -52,6 +52,8 @@
    opts          - optional map:
                      :path-params - map for URI :param replacement
                      :params      - query/body params
+                     :body        - a prebuilt body sent as-is (a js/FormData for multipart);
+                                    wins over :params and the endpoint's :request-format
                      :headers     - additional headers (e.g. {:authorization \"Bearer ...\"})
    
    Result channel receives a map: {:success? bool, :data response-data}
@@ -163,6 +165,17 @@
    on ONE reload. Without a handler registered, such a 401 is returned unchanged."
   [f]
   (retry/set-token-stale-handler! f))
+
+(defn set-unauthorized-handler!
+  "Register a 1-arg fn called with the failed result when a request comes back 401 for any
+   reason other than `token-stale` — the session is over, not merely out of date. It runs
+   once per such response, beside delivering the result to the caller (whose error branch
+   still runs), so routing a lapsed session to re-authentication lives in one place instead
+   of in every loader. Typically: forget the token, remember the route, navigate to login.
+   Without a handler registered such a 401 is returned unchanged. HTTP requests only — an
+   SSE stream a 401 closes re-opens on its own backoff."
+  [f]
+  (retry/set-unauthorized-handler! f))
 
 (defn init
   "Initialize HTTP API module. Sets up re-frame integration to sync

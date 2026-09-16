@@ -7,6 +7,20 @@ released at the same version number.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-17
+
+### Added
+
+- **http-api:** `:body` in the runtime opts of `execute` / `raw-execute` — a prebuilt request
+  body sent as-is, for a `js/FormData` multipart upload. It wins over `:params` and the
+  endpoint's `:request-format`: no format is applied and no Content-Type is set, so the
+  browser writes the multipart boundary itself.
+- **http-api:** `set-unauthorized-handler!` — `(fn [result])` called once when a request
+  comes back 401 for any reason other than `token-stale` (the session is over, not merely
+  out of date), beside delivering the result to the caller. Routing a lapsed session to
+  re-authentication lives in one place instead of in every loader. `retry/session-over-401?`
+  is the pure predicate behind it.
+
 ## [0.4.0] - 2026-09-16
 
 ### Added
@@ -98,7 +112,8 @@ released at the same version number.
 - Initial extraction of `reagent-form`, `reagent-http-api` and `reagent-router`
   into a three-module repo.
 
-[Unreleased]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.1.0...v0.2.0

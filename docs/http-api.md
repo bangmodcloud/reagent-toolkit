@@ -82,6 +82,23 @@ a token:
   (fn [request token] (assoc-in request [:headers :x-api-key] token)))
 ```
 
+Two kinds of 401 get a hook, so the auth feature owns them and no loader has to:
+
+```clojure
+;; 401 {:reason "token-stale"} — reload the token, the request retries once on its own
+(http-api/set-token-stale-handler! (fn [] (auth/reload-token!)))   ; returns a channel
+
+;; any other 401 — the session is over: forget the token, go to login
+(http-api/set-unauthorized-handler!
+  (fn [_result]
+    (reset! auth/access-token nil)
+    (router/navigate! :login)))
+```
+
+The library only tells the two apart; what a lapsed session *means* stays in your handler.
+The caller still receives the 401 either way, so its own error branch renders as it would
+have. Neither hook applies to SSE — a stream a 401 closes re-opens on its own backoff.
+
 ## API reference
 
 `bangmod.http-api.core`:
@@ -90,12 +107,13 @@ a token:
 | --- | --- |
 | `(defapi api-name options endpoints-spec)` | Declares one named REST/SSE API. `options` is `{:base-url "..."}`. `endpoints-spec` is `endpoint-name -> spec` — see below. |
 | `(execute api-name endpoint-name opts?)` | Request endpoint: fires it, returns the endpoint's reaction (`raw-execute` + `get-data-reaction`), `opts` as for `raw-execute`. `:sse` endpoint: opens the stream, returns the subscription handle, `opts` as for `subscribe`. Either way `(:data @x)` is the latest body/frame — deref it in a component. |
-| `(raw-execute api-name endpoint-name opts?)` | Fires one request, returns a channel with `{:success? bool :data ...}`. `opts`: `:path-params` (fills `:param` in the URI), `:params` (query/body), `:headers` (overrides the auto-injected token for that call). The reaction/re-frame slot keeps the last successful `:data` across failures — a failed call sets `:success? false` and puts the failure under `:error` there. |
+| `(raw-execute api-name endpoint-name opts?)` | Fires one request, returns a channel with `{:success? bool :data ...}`. `opts`: `:path-params` (fills `:param` in the URI), `:params` (query/body), `:body` (a prebuilt body sent as-is — a `js/FormData` for multipart; wins over `:params` and `:request-format`), `:headers` (overrides the auto-injected token for that call). The reaction/re-frame slot keeps the last successful `:data` across failures — a failed call sets `:success? false` and puts the failure under `:error` there. |
 | `(subscribe api-name endpoint-name opts)` | Opens a live subscription against an `:sse` endpoint, returns a handle that derefs to `{:sse? true :connected? bool :data <latest frame> :message-count n :error msg-or-nil}`. `opts`: `:path-params`, `:params`, `:on-open` (0-arg, every reconnect including the first — see Gotchas), `:on-message` (1-arg, parsed frame data), `:on-error` (1-arg, message string), `:events` (extra named SSE event types delivered to `:on-message`, default `["changed"]` — unnamed frames always arrive). |
 | `(unsubscribe! handle)` | Closes the connection, cancels any pending reconnect. Safe on an already-closed handle; a no-op on anything that isn't a subscription (a plain-request reaction, `nil`), so a component can pass whatever `execute` returned. |
 | `(set-auth-token-provider! f)` | Registers a 0-arg fn returning the access token (or `nil`); whenever it returns one, the injector puts it on the request. Read fresh on every attempt, so a retry after a token reload carries the new token. SSE streams get it as `?access_token=`. |
 | `(set-auth-token-injector! f)` | Registers `(fn [request token] -> request)` — how the token goes onto the cljs-ajax request map (`:uri :method :params :headers ...`). Default `bangmod.http-api.auth/bearer-injector`: `Authorization: Bearer <token>` unless the call set `:authorization` itself. `nil` restores the default. HTTP requests only. |
 | `(set-token-stale-handler! f)` | Registers a 0-arg fn returning a channel, called when a 401 carries `{:reason "token-stale"}`. Retried exactly once after the handler's channel closes; concurrent stale requests share one reload. No handler registered ⇒ the 401 passes through unchanged. |
+| `(set-unauthorized-handler! f)` | Registers a 1-arg fn called with the failed result when a request comes back 401 for any reason other than `token-stale` — the session is over, not merely out of date. Runs once per such response, beside delivering the result to the caller. HTTP requests only. No handler registered ⇒ the 401 passes through unchanged. |
 | `(init)` | Wires re-frame integration: every response/SSE update mirrors into `[:_http-api :data]` in the app-db. Optional — `execute`/`raw-execute`/`subscribe`/`get-data-reaction` work without it. |
 | `(get-data-reaction api-name endpoint-name)` | Reagent reaction over an endpoint's stored slot, without firing anything: `@(http-api/get-data-reaction :account :get)`. `nil` before the first response. Throws if the endpoint was never declared. |
 
@@ -136,6 +154,24 @@ library's):
 `execute` is exactly `raw-execute` followed by `get-data-reaction`; both update the same
 slot, so a `raw-execute` from an event handler also refreshes every component bound to the
 endpoint's reaction.
+
+### Uploading a file
+
+`:params` goes through the endpoint's `:request-format`; a multipart upload must not. Pass
+the `js/FormData` as `:body` instead — it is sent as-is, no format is applied and no
+`Content-Type` is set, so the browser writes the multipart boundary itself:
+
+```clojure
+(defapi :document {:base-url "/api"}
+  {:upload {:method :post :uri "/documents" :response-format :json}})
+
+(defn upload! [file]
+  (let [form-data (doto (js/FormData.) (.append "file" file))]
+    (http-api/raw-execute :document :upload {:body form-data})))
+```
+
+`:body` wins over `:params` and `:request-format` when both are given; `:path-params`,
+`:headers` and the auto-injected token still apply.
 
 ## `subscribe` / `unsubscribe!`: the stream with callbacks
 
@@ -221,6 +257,12 @@ would loop.
 - **A stale token retries at most once**, and concurrent stale requests share that one
   reload. With no `set-token-stale-handler!` registered, the 401 just reaches your callback
   like any other failure.
+- **`set-unauthorized-handler!` does not replace the caller's error branch** — the 401 is
+  delivered to the channel as well, so a loader that renders its own failure still does. A
+  second `token-stale` after the reload is delivered the same way and does *not* fire the
+  handler: the library does not decide that "stale twice" means the session is over.
+- **`:body` skips `:request-format` entirely** — no `Content-Type` is set. For a JSON body
+  keep using `:params`; `:body` is for what the browser must encode itself (`js/FormData`).
 - **`raw-execute` on an `:sse` endpoint (and `subscribe` on anything else) throws
   immediately**, naming the mismatch, rather than failing somewhere inside the transport.
 - **`:headers` on a call overrides the auto-injected `:authorization`**, not merges under it.

@@ -45,11 +45,15 @@
    runtime opts keys:
      :path-params  - map of path parameter replacements (values percent-encoded)
      :params       - query params (GET) or body params (POST/PUT/PATCH)
+     :body         - a prebuilt request body sent as-is (a js/FormData for a multipart
+                     upload). Wins over :params and the endpoint's :request-format: no
+                     format is applied and no Content-Type is set, so the browser writes
+                     the multipart boundary itself.
      :headers      - additional headers (e.g. {:authorization \"Bearer ...\"})"
   [api-options endpoint-spec opts]
   (let [{:keys [base-url]} api-options
         {:keys [method uri request-format response-format timeout with-credentials]} endpoint-spec
-        {:keys [path-params params headers]} opts
+        {:keys [path-params params headers body]} opts
         token (when-let [provider @auth-token-provider] (provider))
         full-uri (str (or base-url "")
                       (sse/replace-path-params uri path-params))
@@ -70,8 +74,9 @@
              :method          (or method :get)
              :timeout         (or timeout 10000)
              :response-format resp-format}
-      req-format       (assoc :format req-format)
-      params           (assoc :params params)
+      (and req-format (nil? body)) (assoc :format req-format)
+      (and params (nil? body))     (assoc :params params)
+      body                         (assoc :body body)
       (seq headers)    (assoc :headers headers)
       with-credentials (assoc :with-credentials true)
       ;; Last, over the finished map, so an injector can put the token anywhere — a
@@ -140,13 +145,26 @@
                          :handler (fn [[success? response-data]]
                                     (on-result {:success? success? :data response-data})))))]
     (fire! (fn [result]
-             (if (and (retry/token-stale-401? result) @retry/token-stale-handler)
+             (cond
+               (and (retry/token-stale-401? result) @retry/token-stale-handler)
                ;; Exactly ONE retry. A second `token-stale` is surfaced to the caller rather
                ;; than looped on — the reload either produced a usable token or the session
                ;; is genuinely over, and the handler routes that to re-authentication.
                (a/go (a/<! (retry/reload-token!))
-                     (fire! deliver!))
-               (deliver! result))))
+                     (fire! (fn [retried]
+                              ;; The retry's own 401 is the session ending, not a second stale.
+                              (when (and (retry/session-over-401? retried) @retry/unauthorized-handler)
+                                (@retry/unauthorized-handler retried))
+                              (deliver! retried))))
+
+               (and (retry/session-over-401? result) @retry/unauthorized-handler)
+               ;; The caller still gets the result — its own error branch renders as it
+               ;; would have — and the handler runs beside it, once, from here, so no
+               ;; caller has to remember to route a 401 to login.
+               (do (@retry/unauthorized-handler result)
+                   (deliver! result))
+
+               :else (deliver! result))))
     c))
 
 ;; --- subscriptions (`:method :sse`) -----------------------------------------

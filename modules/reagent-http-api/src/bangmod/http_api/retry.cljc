@@ -42,6 +42,24 @@
        (= 401 (get-in result [:data :status]))
        (= stale-token-reason (get-in result [:data :response :reason]))))
 
+;; Optional 1-arg fn called with the failed result when a request comes back 401 for a
+;; reason other than `token-stale` — the session is over, not merely out of date. Registered
+;; by the app's auth feature (typically: forget the token, remember the route, go to login).
+;; With none registered the 401 is handed to the caller unchanged.
+(defonce unauthorized-handler (atom nil))
+
+(defn set-unauthorized-handler! [f]
+  (reset! unauthorized-handler f))
+
+(defn session-over-401?
+  "Is this `execute` result a 401 that a token reload cannot fix — every 401 that is not
+   `token-stale`? Those two are the only 401s the module distinguishes: one is retried once
+   after a reload, this one is the session ending."
+  [result]
+  (and (not (:success? result))
+       (= 401 (get-in result [:data :status]))
+       (not (token-stale-401? result))))
+
 (defn reload-token!
   "The single in-flight token reload, as a channel. Concurrent stale requests park on the
    same promise-chan instead of each firing their own refresh — a burst of parallel requests

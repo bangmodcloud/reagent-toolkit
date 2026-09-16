@@ -26,3 +26,11 @@
 
     (testing "a successful response never qualifies"
       (is (false? (retry/token-stale-401? (assoc stale :success? true)))))))
+
+(deftest session-over-401-is-every-401-that-is-not-token-stale
+  (is (retry/session-over-401? {:success? false :data {:status 401 :response {:reason "expired"}}}))
+  (is (retry/session-over-401? {:success? false :data {:status 401}}) "no reason at all is still the session over")
+  (is (not (retry/session-over-401? {:success? false :data {:status 401 :response {:reason "token-stale"}}}))
+      "the stale one is retried, not routed to login")
+  (is (not (retry/session-over-401? {:success? false :data {:status 403}})))
+  (is (not (retry/session-over-401? {:success? true :data {:status 401}}))))

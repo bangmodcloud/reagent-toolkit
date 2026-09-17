@@ -10,17 +10,17 @@
  {;; clj -M:dev  — REPL with ClojureScript on the classpath
   :dev
   {:extra-paths ["dev"]
-   :extra-deps {org.clojure/clojurescript {:mvn/version "1.11.132"}
-                thheller/shadow-cljs      {:mvn/version "2.28.20"}}}
+   :extra-deps {org.clojure/clojurescript {:mvn/version "1.12.145"}
+                thheller/shadow-cljs      {:mvn/version "3.5.3"}}}
 
   ;; npx shadow-cljs compile test  (see shadow-cljs.edn)
   :test
   {:extra-paths ["test"]
-   :extra-deps {org.clojure/clojurescript {:mvn/version "1.11.132"}
-                thheller/shadow-cljs      {:mvn/version "2.28.20"}}}
+   :extra-deps {org.clojure/clojurescript {:mvn/version "1.12.145"}
+                thheller/shadow-cljs      {:mvn/version "3.5.3"}}}
 
   ;; clj -T:build jar-all / install-all / deploy-all
   :build
-  {:deps {io.github.clojure/tools.build {:mvn/version "0.10.5"}
-          slipset/deps-deploy           {:mvn/version "0.2.2"}}
+  {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}
+          slipset/deps-deploy           {:mvn/version "0.2.5"}}
    :ns-default build}}}

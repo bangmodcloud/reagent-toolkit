@@ -43,9 +43,9 @@ the gotchas worth knowing before you rely on it.
 ### From Clojars
 
 ```clojure
-{:deps {io.github.bangmodcloud/reagent-form     {:mvn/version "0.5.0"}
-        io.github.bangmodcloud/reagent-http-api {:mvn/version "0.5.0"}
-        io.github.bangmodcloud/reagent-router   {:mvn/version "0.5.0"}}}
+{:deps {io.github.bangmodcloud/reagent-form     {:mvn/version "0.5.1"}
+        io.github.bangmodcloud/reagent-http-api {:mvn/version "0.5.1"}
+        io.github.bangmodcloud/reagent-router   {:mvn/version "0.5.1"}}}
 ```
 
 ### As a git dependency
@@ -58,7 +58,7 @@ coexist in one dependency map.
 ```clojure
 {:deps {io.github.bangmodcloud/reagent-router
         {:git/url   "https://github.com/bangmodcloud/reagent-toolkit.git"
-         :git/tag   "v0.5.0"
+         :git/tag   "v0.5.1"
          :git/sha   "<sha>"
          :deps/root "modules/reagent-router"}}}
 ```
@@ -111,7 +111,7 @@ clj -T:build clean
 clj -T:build jar-all                                 # target/*.jar
 clj -T:build install-all                             # into ~/.m2
 clj -T:build jar :module '"reagent-router"'          # just one module
-clj -T:build deploy-all :version '"0.5.0"'           # to Clojars
+clj -T:build deploy-all :version '"0.5.1"'           # to Clojars
 ```
 
 `deploy` reads `CLOJARS_USERNAME`/`CLOJARS_PASSWORD` (a

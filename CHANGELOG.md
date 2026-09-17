@@ -7,6 +7,16 @@ released at the same version number.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-17
+
+### Changed
+
+- Dependency floors raised: `reagent` 1.2.0 → 2.0.1, `re-frame` 1.4.3 → 1.4.7,
+  `core.async` 1.6.681 → 1.9.865. The reagent major bump is the one that reaches consumers:
+  a project still pinning reagent 1.x will be pulled up to 2.x by these modules' poms.
+- Build/test toolchain: ClojureScript 1.12.145, shadow-cljs 3.5.3, tools.build 0.10.14,
+  deps-deploy 0.2.5; GitHub Actions bumped to current majors.
+
 ## [0.5.0] - 2026-09-17
 
 ### Added
@@ -112,7 +122,8 @@ released at the same version number.
 - Initial extraction of `reagent-form`, `reagent-http-api` and `reagent-router`
   into a three-module repo.
 
-[Unreleased]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.2.0...v0.3.0

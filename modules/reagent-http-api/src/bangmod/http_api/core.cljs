@@ -112,15 +112,18 @@
 
    opts:
      :path-params - map for URI :param replacement
-     :params      - extra query params
+     :params      - extra query params (the token never goes in the URL: the stream is
+                    authenticated like a request, through the token injector — by default
+                    the `Authorization: Bearer` header)
      :on-open     - 0-arg fn, called on EVERY (re)connection including the first. This is
                     where a full re-fetch belongs: the server subscribes before writing its
                     first byte, so nothing can slip between the snapshot and the stream.
      :on-message  - 1-arg fn receiving the parsed `data` of one frame
-     :on-error    - 1-arg fn receiving a message
+     :on-error    - 1-arg fn receiving a message: \"HTTP <status>\", \"connection lost\"
+                    or \"unauthorized\"
      :events      - extra named SSE event types delivered to :on-message (default
                     [\"changed\"]). Unnamed frames always arrive; a frame the server sends
-                    with an `event:` name only fires a listener registered for that name.
+                    with an `event:` name is delivered only if that name is listed.
 
    Example:
      (subscribe :account :changes {:on-open #(load!) :on-message (fn [_] (load!))})"
@@ -138,8 +141,8 @@
   "Register a 0-arg fn returning the current access token (or nil). Whenever it returns
    one, the token injector (default: `Authorization: Bearer <token>`, unless the call set
    its own :authorization header) puts it on the request. Read fresh for every attempt,
-   so a retry after a token reload carries the new token. SSE streams get it as
-   `?access_token=` — EventSource cannot set headers."
+   so a retry after a token reload — or a stream's re-open — carries the new token. SSE
+   streams are authenticated the same way, through the same injector."
   [f]
   (internal/set-auth-token-provider! f))
 
@@ -147,14 +150,14 @@
   "Register how the token from `set-auth-token-provider!` goes onto a request:
    `(fn [request token] -> request)`, over the finished cljs-ajax request map
    (:uri :method :params :headers ...), called only when the provider returned a token.
+   SSE streams go through it too: their request map is {:uri :method :params :headers
+   :with-credentials}, and the stream is opened with whatever the injector returns.
    The default is `bangmod.http-api.auth/bearer-injector`; pass nil to restore it.
 
      ;; token as a custom header
      (set-auth-token-injector! (fn [req token] (assoc-in req [:headers :x-api-key] token)))
      ;; token as a query param
-     (set-auth-token-injector! (fn [req token] (assoc-in req [:params :access_token] token)))
-
-   HTTP requests only — an SSE stream's URL always carries `?access_token=`."
+     (set-auth-token-injector! (fn [req token] (assoc-in req [:params :api_key] token)))"
   [f]
   (internal/set-auth-token-injector! f))
 
@@ -162,7 +165,9 @@
   "Register a 0-arg fn returning a channel, called when the server refuses a request's token
    as `token-stale` (a 401 carrying `reason: \"token-stale\"`). The request is retried once
    after it completes, rebuilt so the reloaded token is used. Concurrent stale requests park
-   on ONE reload. Without a handler registered, such a 401 is returned unchanged."
+   on ONE reload. Without a handler registered, such a 401 is returned unchanged.
+   An SSE stream refused as `token-stale` — a 401 when opening, or a `reconnect` frame
+   with that reason — reloads through the same handler, then re-opens."
   [f]
   (retry/set-token-stale-handler! f))
 
@@ -172,8 +177,8 @@
    once per such response, beside delivering the result to the caller (whose error branch
    still runs), so routing a lapsed session to re-authentication lives in one place instead
    of in every loader. Typically: forget the token, remember the route, navigate to login.
-   Without a handler registered such a 401 is returned unchanged. HTTP requests only — an
-   SSE stream a 401 closes re-opens on its own backoff."
+   Without a handler registered such a 401 is returned unchanged. An SSE stream refused
+   with such a 401 calls it the same way, once, and is not re-opened."
   [f]
   (retry/set-unauthorized-handler! f))
 

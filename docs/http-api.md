@@ -73,9 +73,11 @@ Attach a token to every request automatically, once at boot:
 ```
 
 By default it goes out as `Authorization: Bearer <token>` (a call that sets its own
-`:authorization` header keeps it). If your API wants the token somewhere else, register an
-injector — a function over the finished request map, called whenever the provider returned
-a token:
+`:authorization` header keeps it). SSE streams are authenticated the same way — the same
+header, re-read on every (re)open — so the server authenticates a stream route exactly like
+any other route; the token is never put in a stream's URL. If your API wants the token
+somewhere else, register an injector — a function over the finished request map, called
+whenever the provider returned a token (streams go through it too):
 
 ```clojure
 (http-api/set-auth-token-injector!
@@ -97,7 +99,9 @@ Two kinds of 401 get a hook, so the auth feature owns them and no loader has to:
 
 The library only tells the two apart; what a lapsed session *means* stays in your handler.
 The caller still receives the 401 either way, so its own error branch renders as it would
-have. Neither hook applies to SSE — a stream a 401 closes re-opens on its own backoff.
+have. Both hooks apply to SSE streams too: a stream refused with `token-stale` reloads and
+re-opens, and a stream refused with any other 401 calls the unauthorized handler once and
+stays closed (see [Reconnecting](#reconnecting)).
 
 ## API reference
 
@@ -110,10 +114,10 @@ have. Neither hook applies to SSE — a stream a 401 closes re-opens on its own 
 | `(raw-execute api-name endpoint-name opts?)` | Fires one request, returns a channel with `{:success? bool :data ...}`. `opts`: `:path-params` (fills `:param` in the URI), `:params` (query/body), `:body` (a prebuilt body sent as-is — a `js/FormData` for multipart; wins over `:params` and `:request-format`), `:headers` (overrides the auto-injected token for that call). The reaction/re-frame slot keeps the last successful `:data` across failures — a failed call sets `:success? false` and puts the failure under `:error` there. |
 | `(subscribe api-name endpoint-name opts)` | Opens a live subscription against an `:sse` endpoint, returns a handle that derefs to `{:sse? true :connected? bool :data <latest frame> :message-count n :error msg-or-nil}`. `opts`: `:path-params`, `:params`, `:on-open` (0-arg, every reconnect including the first — see Gotchas), `:on-message` (1-arg, parsed frame data), `:on-error` (1-arg, message string), `:events` (extra named SSE event types delivered to `:on-message`, default `["changed"]` — unnamed frames always arrive). |
 | `(unsubscribe! handle)` | Closes the connection, cancels any pending reconnect. Safe on an already-closed handle; a no-op on anything that isn't a subscription (a plain-request reaction, `nil`), so a component can pass whatever `execute` returned. |
-| `(set-auth-token-provider! f)` | Registers a 0-arg fn returning the access token (or `nil`); whenever it returns one, the injector puts it on the request. Read fresh on every attempt, so a retry after a token reload carries the new token. SSE streams get it as `?access_token=`. |
-| `(set-auth-token-injector! f)` | Registers `(fn [request token] -> request)` — how the token goes onto the cljs-ajax request map (`:uri :method :params :headers ...`). Default `bangmod.http-api.auth/bearer-injector`: `Authorization: Bearer <token>` unless the call set `:authorization` itself. `nil` restores the default. HTTP requests only. |
-| `(set-token-stale-handler! f)` | Registers a 0-arg fn returning a channel, called when a 401 carries `{:reason "token-stale"}`. Retried exactly once after the handler's channel closes; concurrent stale requests share one reload. No handler registered ⇒ the 401 passes through unchanged. |
-| `(set-unauthorized-handler! f)` | Registers a 1-arg fn called with the failed result when a request comes back 401 for any reason other than `token-stale` — the session is over, not merely out of date. Runs once per such response, beside delivering the result to the caller. HTTP requests only. No handler registered ⇒ the 401 passes through unchanged. |
+| `(set-auth-token-provider! f)` | Registers a 0-arg fn returning the access token (or `nil`); whenever it returns one, the injector puts it on the request. Read fresh on every attempt, so a retry after a token reload — or a stream's re-open — carries the new token. SSE streams are authenticated the same way (by default the `Authorization` header). |
+| `(set-auth-token-injector! f)` | Registers `(fn [request token] -> request)` — how the token goes onto the cljs-ajax request map (`:uri :method :params :headers ...`). Default `bangmod.http-api.auth/bearer-injector`: `Authorization: Bearer <token>` unless the call set `:authorization` itself. `nil` restores the default. SSE streams go through it too, with a `{:uri :method :params :headers :with-credentials}` map. |
+| `(set-token-stale-handler! f)` | Registers a 0-arg fn returning a channel, called when a 401 carries `{:reason "token-stale"}`. Retried exactly once after the handler's channel closes; concurrent stale requests share one reload. No handler registered ⇒ the 401 passes through unchanged. An SSE stream refused as `token-stale` reloads through it, then re-opens. |
+| `(set-unauthorized-handler! f)` | Registers a 1-arg fn called with the failed result when a request comes back 401 for any reason other than `token-stale` — the session is over, not merely out of date. Runs once per such response, beside delivering the result to the caller. Also called once for an SSE stream refused with such a 401, which is then not re-opened. No handler registered ⇒ the 401 passes through unchanged. |
 | `(init)` | Wires re-frame integration: every response/SSE update mirrors into `[:_http-api :data]` in the app-db. Optional — `execute`/`raw-execute`/`subscribe`/`get-data-reaction` work without it. |
 | `(get-data-reaction api-name endpoint-name)` | Reagent reaction over an endpoint's stored slot, without firing anything: `@(http-api/get-data-reaction :account :get)`. `nil` before the first response. Throws if the endpoint was never declared. |
 
@@ -189,8 +193,8 @@ re-frame, log drops — rather than only render its latest frame:
    :events     ["changed"]})                        ; named SSE events to treat as messages
 ```
 
-`opts`: `:path-params` / `:params` as for a request (the token rides along as
-`?access_token=`), plus
+`opts`: `:path-params` / `:params` as for a request (the token goes in the
+`Authorization` header, as for a request — never in the URL), plus
 
 - `:on-open` — 0-arg, on **every** connection including the first. This is where a full
   re-fetch of dependent data belongs: the server subscribes before writing its first byte,
@@ -198,7 +202,9 @@ re-frame, log drops — rather than only render its latest frame:
   fetch so nothing missed while disconnected stays missed.
 - `:on-message` — 1-arg, the frame's `data` parsed as JSON (keywordized), or the raw string
   if it isn't JSON.
-- `:on-error` — 1-arg, a message string; the connection dropped. Reconnect is not your job.
+- `:on-error` — 1-arg, a message string: `"HTTP <status>"` (the server refused the stream),
+  `"connection lost"` (a network error, or the server ended the stream) or
+  `"unauthorized"` (a 401 that is not `token-stale` — see below). Reconnect is not your job.
 - `:events` — the SSE `event:` names delivered to `:on-message`, default `["changed"]`.
   Unnamed frames always arrive; a frame the server sends under any other name is ignored,
   so this must match what the server emits.
@@ -224,19 +230,27 @@ a component elsewhere can render the stream without holding the handle. `:messag
 exists because two consecutive frames can be equal (a snapshot resent after a reconnect) and
 a reaction over an equal value does not re-fire.
 
-`(unsubscribe! handle)` closes the `EventSource` and cancels any pending reconnect. It is
+`(unsubscribe! handle)` aborts the connection and cancels any pending reconnect. It is
 safe on an already-closed handle and a no-op on anything that isn't a subscription — the
 reaction `execute` returns for a request, `nil` — so cleanup code can pass whatever it was
 handed.
 
 ### Reconnecting
 
-Owned by the library, not your code. When the browser's `EventSource` gives up (a non-200
-status, a wrong `Content-Type` — a 401, a 503) the subscription re-opens on a backoff of
-1 s doubling to a 30 s cap, re-reading the token from `set-auth-token-provider!` each time;
-while `EventSource` is still retrying on its own (the server's `retry:` field) nothing is
-done but reporting the drop to `:on-error`. `:on-open` fires again on success, which is why
-the re-fetch belongs there.
+Owned by the library, not your code. A stream is a `fetch` with `Accept: text/event-stream`
+and the usual auth header, so the library sees the response status and acts on it:
+
+| Response | What happens |
+| --- | --- |
+| `200` + `Content-Type: text/event-stream` | Connected: `:connected? true`, `:on-open` fires, the backoff resets. |
+| `401` with body `{"reason": "token-stale"}` | The token is reloaded through `set-token-stale-handler!`, then the stream re-opens with the new one. |
+| any other `401` | The session is over: `set-unauthorized-handler!` is called once (with `{:success? false :data {:status 401 :response <body>}}`, the shape a failed request has), `:on-error` gets `"unauthorized"`, and the stream is **not** re-opened. |
+| anything else — another status, a `200` that isn't `text/event-stream`, a network error, the server ending the stream | `:on-error` gets the message and the stream re-opens on a backoff of 1 s doubling to a 30 s cap. |
+
+Every re-open re-reads the token from `set-auth-token-provider!`. A `retry:` field from the
+server raises the next delay to at least that many ms, never lowers it. Once the stream has
+sent an `id:`, re-opens carry it as `Last-Event-ID`. `:on-open` fires again on success,
+which is why the re-fetch belongs there.
 
 The server can also end a connection on purpose by sending a `reconnect` event whose data
 is `{"reason": "..."}` — a connection deadline, load shedding. The client re-opens on the
@@ -266,3 +280,11 @@ would loop.
 - **`raw-execute` on an `:sse` endpoint (and `subscribe` on anything else) throws
   immediately**, naming the mismatch, rather than failing somewhere inside the transport.
 - **`:headers` on a call overrides the auto-injected `:authorization`**, not merges under it.
+- **An SSE route authenticates from the `Authorization` header, like every other route.**
+  The stream sends the same header a request does; nothing is put in the URL. For a
+  cross-origin stream the server's CORS policy must allow the `Authorization` (and, once
+  the stream sends ids, `Last-Event-ID`) request header: a request carrying either is
+  preflighted.
+- **A stream is not limited to one stale-token retry.** Each `token-stale` 401 on open
+  reloads and re-opens on the growing backoff, since a stream has no caller to hand the
+  failure to; only a 401 that is *not* `token-stale` stops it.

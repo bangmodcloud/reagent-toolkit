@@ -7,6 +7,36 @@ released at the same version number.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-27
+
+### Changed
+
+- **http-api:** SSE streams (`subscribe`, and `execute` on an `:sse` endpoint) authenticate
+  the way requests do: the registered token injector puts the token on the stream's request
+  (by default `Authorization: Bearer <token>`), re-read from the provider on every
+  (re)open. The token is no longer put in the stream URL.
+  **Migration:** SSE routes must authenticate from the Authorization header; the
+  `?access_token=` query parameter is no longer sent. Cross-origin, the server's CORS policy
+  must allow the `Authorization` and `Last-Event-ID` request headers.
+- **http-api:** the stream transport is `fetch` reading the response body, replacing
+  `EventSource`. The public API and the handle's state map are unchanged. Because the
+  status is now visible: a 401 `token-stale` on open reloads the token (through
+  `set-token-stale-handler!`) and re-opens; any other 401 calls `set-unauthorized-handler!`
+  once, sets `:error "unauthorized"` and does not re-open; any other failure re-opens on the
+  backoff as before. A server `retry:` is honoured as the minimum reconnect delay, and
+  re-opens send `Last-Event-ID` once the server has sent an `id:`.
+- **http-api:** `:on-error` receives `"HTTP <status>"`, `"connection lost"` or
+  `"unauthorized"` (previously always `"connection lost"`).
+- **http-api:** `bangmod.http-api.sse/stream-url` no longer takes a `token` argument.
+- **http-api:** an `:sse` endpoint's `:with-credentials true` now sends cookies on a
+  cross-origin stream (`credentials: "include"`).
+
+### Added
+
+- **http-api:** `bangmod.http-api.sse/parser` + `feed` — a pure WHATWG event-stream parser
+  (`(feed state chunk) -> [state events]`), and `sse/response-action` /
+  `sse/reconnect-delay`, the transport's decisions as pure functions.
+
 ## [0.5.1] - 2026-09-17
 
 ### Changed
@@ -122,7 +152,8 @@ released at the same version number.
 - Initial extraction of `reagent-form`, `reagent-http-api` and `reagent-router`
   into a three-module repo.
 
-[Unreleased]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.3.0...v0.4.0

@@ -1,6 +1,7 @@
 (ns bangmod.http-api.internal
   (:require [ajax.core :as ajax]
             [bangmod.http-api.retry :as retry]
+            [bangmod.http-api.request :as request]
             [bangmod.http-api.auth :as auth]
             [bangmod.http-api.sse :as sse]
             [reagent.core :as r]
@@ -11,6 +12,9 @@
 ;; already subscribed to.
 (defonce api-specs (atom {}))
 (defonce a-data (r/atom {}))
+;; [api-name endpoint-name] -> the number of the latest request `execute` sent to it. An
+;; answer is written into `a-data` only while its request is still the latest.
+(defonce a-sent (atom {}))
 (defonce a-reactions (r/atom {}))
 
 ;; Optional provider fn returning the current token (or nil). When it returns one, the
@@ -130,50 +134,20 @@
         _ (when (= :sse (:method endpoint-spec))
             (throw (ex-info (str (name api-name) "/" (name endpoint-name)
                                  " is an SSE endpoint — use subscribe, not execute")
-                            {:api-name api-name :endpoint-name endpoint-name :method :sse})))
-        c (a/chan 1)
-        deliver! (fn [result]
-                   ;; The stored slot keeps the last GOOD :data across failures — a UI bound
-                   ;; to the reaction must not go blank because one refresh failed. The
-                   ;; failure itself lands under :error; the caller's channel still gets the
-                   ;; raw result untouched.
-                   (swap! a-data update-in [api-name endpoint-name]
-                          (fn [prev]
-                            (if (:success? result)
-                              result
-                              (assoc (or prev {}) :success? false :error (:data result)))))
-                   (a/put! c result))
-        fire! (fn [on-result]
-                ;; Rebuilt per attempt on purpose: `build-request-map` reads the bearer token
-                ;; from `auth-token-provider` as it builds, so the retry below picks up the
-                ;; reloaded one. Reusing the first request map would retry with the token the
-                ;; server just refused.
-                (ajax/ajax-request
-                  (assoc (build-request-map api-options endpoint-spec opts)
-                         :handler (fn [[success? response-data]]
-                                    (on-result {:success? success? :data response-data})))))]
-    (fire! (fn [result]
-             (cond
-               (and (retry/token-stale-401? result) @retry/token-stale-handler)
-               ;; Exactly ONE retry. A second `token-stale` is surfaced to the caller rather
-               ;; than looped on — the reload either produced a usable token or the session
-               ;; is genuinely over, and the handler routes that to re-authentication.
-               (a/go (a/<! (retry/reload-token!))
-                     (fire! (fn [retried]
-                              ;; The retry's own 401 is the session ending, not a second stale.
-                              (when (and (retry/session-over-401? retried) @retry/unauthorized-handler)
-                                (@retry/unauthorized-handler retried))
-                              (deliver! retried))))
-
-               (and (retry/session-over-401? result) @retry/unauthorized-handler)
-               ;; The caller still gets the result — its own error branch renders as it
-               ;; would have — and the handler runs beside it, once, from here, so no
-               ;; caller has to remember to route a 401 to login.
-               (do (@retry/unauthorized-handler result)
-                   (deliver! result))
-
-               :else (deliver! result))))
-    c))
+                            {:api-name api-name :endpoint-name endpoint-name :method :sse})))]
+    (request/send!
+      {:a-data a-data
+       :a-sent a-sent
+       :path   [api-name endpoint-name]
+       :fire!  (fn [on-result]
+                 ;; Rebuilt per attempt on purpose: `build-request-map` reads the bearer token
+                 ;; from `auth-token-provider` as it builds, so the stale-token retry picks up
+                 ;; the reloaded one. Reusing the first request map would retry with the token
+                 ;; the server just refused.
+                 (ajax/ajax-request
+                   (assoc (build-request-map api-options endpoint-spec opts)
+                          :handler (fn [[success? response-data]]
+                                     (on-result {:success? success? :data response-data})))))})))
 
 ;; --- subscriptions (`:method :sse`) -----------------------------------------
 ;;

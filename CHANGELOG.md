@@ -7,6 +7,37 @@ released at the same version number.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-30
+
+### Changed
+
+- **http-api:** an endpoint's stored slot — `get-data-reaction`, the reaction `execute`
+  returns, and its mirror at `[:_http-api :data]` in app-db — now holds the answer to the
+  **latest request sent** to that endpoint ("latest request wins"). Each request is numbered
+  per endpoint when it is sent; an answer to a request that a later one has superseded is
+  never written into the slot, whether it arrives before or after the later one's. While the
+  latest request is in flight the slot keeps its previous value. Previously every answer was
+  written when it arrived, so request A answering after request B (a screen switching from
+  one id to another) left A's stale answer in the slot as the current value.
+  - The channel `raw-execute` returns always delivers that request's own result, superseded
+    or not — `raw-execute` callers see no change.
+  - The failure rule is unchanged but applies only to the latest request: it keeps the last
+    good `:data` and merges `:success? false` and `:error`. A superseded request that fails
+    leaves the slot alone.
+  - The stale-token retry is the same request and keeps its number.
+  - SSE (`subscribe`) is unaffected.
+
+  **Migration:** none for code that reads a request's result off its channel. Code that
+  relied on the slot holding whichever answer arrived last — e.g. two concurrent calls to
+  one endpoint with different params, both read from the slot — now sees the later-sent
+  request's answer; read each result off its own `raw-execute` channel instead.
+
+### Added
+
+- **http-api:** `bangmod.http-api.request` — the request lifecycle (numbering, the
+  stale-token retry, writing to the slot and the channel) with the transport passed in, so
+  it is unit-tested under `:node-test`.
+
 ## [0.6.0] - 2026-09-27
 
 ### Changed
@@ -152,7 +183,8 @@ released at the same version number.
 - Initial extraction of `reagent-form`, `reagent-http-api` and `reagent-router`
   into a three-module repo.
 
-[Unreleased]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.4.0...v0.5.0

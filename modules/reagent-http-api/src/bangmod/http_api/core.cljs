@@ -35,9 +35,13 @@
   (internal/defapi api-name options endpoints-spec))
 
 (defn get-data-reaction
-  "Get a reagent reaction for an endpoint's stored slot — the latest value, not the last
-   call. Useful for reactive UI updates. Throws if the endpoint was never declared —
-   dereferencing the nil would otherwise fail far away with no name attached."
+  "Get a reagent reaction for an endpoint's stored slot. Useful for reactive UI updates.
+
+   The slot holds the answer to the latest request sent to this endpoint (by `execute` or
+   `raw-execute`, from anywhere). An answer to an earlier request never replaces it, whether
+   it arrives before or after the latest one's; while the latest request is in flight the
+   slot keeps its previous value. Throws if the endpoint was never declared — dereferencing
+   the nil would otherwise fail far away with no name attached."
   [api-name endpoint-name]
   (or (get-in @internal/a-reactions [api-name endpoint-name])
       (throw (ex-info (str "No reaction for " (name api-name) "/" (name endpoint-name)
@@ -58,10 +62,14 @@
    
    Result channel receives a map: {:success? bool, :data response-data}
 
-   The reaction / re-frame slot for the endpoint keeps its last successful :data across
-   failures — a failed call sets :success? false and puts the failure under :error there,
-   so a UI bound to `get-data-reaction` / `execute` does not go blank because one refresh
-   failed.
+   The returned channel always delivers this request's own result, even when a later
+   request has superseded it for the slot.
+
+   The reaction / re-frame slot for the endpoint holds the answer to the latest request sent
+   to it; this request's answer is written there only if no later request to the endpoint
+   has been sent since. The slot keeps its last successful :data across failures — a failed
+   latest call sets :success? false and puts the failure under :error there, so a UI bound
+   to `get-data-reaction` / `execute` does not go blank because one refresh failed.
    
    Examples:
      (a/<! (raw-execute :leave :all-leaves))
@@ -88,7 +96,9 @@
    Request endpoint: returns the endpoint's reaction over its shared slot — nil until the
    first response, then {:success? true :data <body>}, and after a failure the same map with
    :success? false and :error <cljs-ajax error map> merged in (the last good :data survives).
-   Any other call against the same endpoint updates it too. `opts` as for `raw-execute`.
+   The slot holds the answer to the latest request sent to this endpoint — this call's, until
+   another call against the same endpoint is sent. An answer to an earlier request never
+   replaces it, whichever order the answers arrive in. `opts` as for `raw-execute`.
 
    `:sse` endpoint: opens the stream and returns the subscription handle, which derefs to
    {:sse? true :connected? bool :data <latest frame> :message-count n :error msg-or-nil}.

@@ -46,7 +46,9 @@ The reaction holds `nil` until the first response, then `{:success? true :data <
 body>}`; after a failed call it keeps the last good `:data`, flips `:success?` to `false` and
 adds `:error <cljs-ajax error map>`. It is the endpoint's shared slot, so any other call
 against `:account/:get` updates it too — and re-rendering never re-fires it, because the
-call sits outside the render fn.
+call sits outside the render fn. The slot holds the answer to the latest request sent to the
+endpoint: an answer to an earlier request never replaces it, whichever order the answers
+arrive in (see Gotchas).
 
 On an `:sse` endpoint `execute` opens the stream instead and returns the subscription handle,
 which derefs the same way — `(:data @x)` is the latest frame. A stream has to be closed when
@@ -111,7 +113,7 @@ stays closed (see [Reconnecting](#reconnecting)).
 | --- | --- |
 | `(defapi api-name options endpoints-spec)` | Declares one named REST/SSE API. `options` is `{:base-url "..."}`. `endpoints-spec` is `endpoint-name -> spec` — see below. |
 | `(execute api-name endpoint-name opts?)` | Request endpoint: fires it, returns the endpoint's reaction (`raw-execute` + `get-data-reaction`), `opts` as for `raw-execute`. `:sse` endpoint: opens the stream, returns the subscription handle, `opts` as for `subscribe`. Either way `(:data @x)` is the latest body/frame — deref it in a component. |
-| `(raw-execute api-name endpoint-name opts?)` | Fires one request, returns a channel with `{:success? bool :data ...}`. `opts`: `:path-params` (fills `:param` in the URI), `:params` (query/body), `:body` (a prebuilt body sent as-is — a `js/FormData` for multipart; wins over `:params` and `:request-format`), `:headers` (overrides the auto-injected token for that call). The reaction/re-frame slot keeps the last successful `:data` across failures — a failed call sets `:success? false` and puts the failure under `:error` there. |
+| `(raw-execute api-name endpoint-name opts?)` | Fires one request, returns a channel with `{:success? bool :data ...}`. `opts`: `:path-params` (fills `:param` in the URI), `:params` (query/body), `:body` (a prebuilt body sent as-is — a `js/FormData` for multipart; wins over `:params` and `:request-format`), `:headers` (overrides the auto-injected token for that call). The channel always delivers this request's own result, even when a later request has superseded it for the slot. The reaction/re-frame slot holds the answer to the latest request sent to the endpoint, and keeps the last successful `:data` across failures — a failed latest call sets `:success? false` and puts the failure under `:error` there. |
 | `(subscribe api-name endpoint-name opts)` | Opens a live subscription against an `:sse` endpoint, returns a handle that derefs to `{:sse? true :connected? bool :data <latest frame> :message-count n :error msg-or-nil}`. `opts`: `:path-params`, `:params`, `:on-open` (0-arg, every reconnect including the first — see Gotchas), `:on-message` (1-arg, parsed frame data), `:on-error` (1-arg, message string), `:events` (extra named SSE event types delivered to `:on-message`, default `["changed"]` — unnamed frames always arrive). |
 | `(unsubscribe! handle)` | Closes the connection, cancels any pending reconnect. Safe on an already-closed handle; a no-op on anything that isn't a subscription (a plain-request reaction, `nil`), so a component can pass whatever `execute` returned. |
 | `(set-auth-token-provider! f)` | Registers a 0-arg fn returning the access token (or `nil`); whenever it returns one, the injector puts it on the request. Read fresh on every attempt, so a retry after a token reload — or a stream's re-open — carries the new token. SSE streams are authenticated the same way (by default the `Authorization` header). |
@@ -119,7 +121,7 @@ stays closed (see [Reconnecting](#reconnecting)).
 | `(set-token-stale-handler! f)` | Registers a 0-arg fn returning a channel, called when a 401 carries `{:reason "token-stale"}`. Retried exactly once after the handler's channel closes; concurrent stale requests share one reload. No handler registered ⇒ the 401 passes through unchanged. An SSE stream refused as `token-stale` reloads through it, then re-opens. |
 | `(set-unauthorized-handler! f)` | Registers a 1-arg fn called with the failed result when a request comes back 401 for any reason other than `token-stale` — the session is over, not merely out of date. Runs once per such response, beside delivering the result to the caller. Also called once for an SSE stream refused with such a 401, which is then not re-opened. No handler registered ⇒ the 401 passes through unchanged. |
 | `(init)` | Wires re-frame integration: every response/SSE update mirrors into `[:_http-api :data]` in the app-db. Optional — `execute`/`raw-execute`/`subscribe`/`get-data-reaction` work without it. |
-| `(get-data-reaction api-name endpoint-name)` | Reagent reaction over an endpoint's stored slot, without firing anything: `@(http-api/get-data-reaction :account :get)`. `nil` before the first response. Throws if the endpoint was never declared. |
+| `(get-data-reaction api-name endpoint-name)` | Reagent reaction over an endpoint's stored slot, without firing anything: `@(http-api/get-data-reaction :account :get)`. `nil` before the first response. Holds the answer to the latest request sent to the endpoint; an answer to an earlier request never replaces it. Throws if the endpoint was never declared. |
 
 `endpoints-spec` per-endpoint keys:
 
@@ -157,7 +159,8 @@ library's):
 
 `execute` is exactly `raw-execute` followed by `get-data-reaction`; both update the same
 slot, so a `raw-execute` from an event handler also refreshes every component bound to the
-endpoint's reaction.
+endpoint's reaction. The channel always delivers its own request's result, even when a
+later request has superseded it for the slot.
 
 ### Uploading a file
 
@@ -268,6 +271,12 @@ would loop.
 - **Always pair `subscribe` (or `execute` on an `:sse` endpoint) with `unsubscribe!`** in
   `component-will-unmount` / `with-let`'s `finally` — a subscription that outlives its
   component leaks a connection and a pending reconnect timer.
+- **The slot is "latest request wins".** Each request is numbered per endpoint when it is
+  sent, and only the latest one's answer is written into the slot. Fire `:get` for id 1, then
+  for id 2, and id 1 answering last does not put id 1 back on screen; while id 2 is in flight
+  the slot keeps whatever it held before. The superseded request's channel still gets its own
+  result. So two concurrent calls to one endpoint with different params cannot both be read
+  off the slot — read each one's result off its `raw-execute` channel.
 - **A stale token retries at most once**, and concurrent stale requests share that one
   reload. With no `set-token-stale-handler!` registered, the 401 just reaches your callback
   like any other failure.

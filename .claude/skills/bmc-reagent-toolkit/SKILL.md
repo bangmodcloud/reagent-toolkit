@@ -6,14 +6,14 @@ description: Use when writing ClojureScript code against the reagent-toolkit lib
 # reagent-toolkit (bangmod.form / bangmod.http-api / bangmod.router)
 
 Three independent ClojureScript libraries for Reagent/re-frame apps. This skill targets
-**0.6.0**. Docs live in `docs/{form,http-api,router}.md` of
+**0.7.0**. Docs live in `docs/{form,http-api,router}.md` of
 https://github.com/bangmodcloud/reagent-toolkit — trust this skill for signatures; read the
 source under `modules/*/src/bangmod/` only when something here doesn't cover it.
 
 ```clojure
-{:deps {io.github.bangmodcloud/reagent-form     {:mvn/version "0.6.0"}
-        io.github.bangmodcloud/reagent-http-api {:mvn/version "0.6.0"}
-        io.github.bangmodcloud/reagent-router   {:mvn/version "0.6.0"}}}
+{:deps {io.github.bangmodcloud/reagent-form     {:mvn/version "0.7.0"}
+        io.github.bangmodcloud/reagent-http-api {:mvn/version "0.7.0"}
+        io.github.bangmodcloud/reagent-router   {:mvn/version "0.7.0"}}}
 ```
 
 They do not depend on each other — add only what the task needs.
@@ -136,7 +136,8 @@ placeholders, values percent-encoded), `:request-format` / `:response-format`
   firing anything. It is the endpoint's stored slot, NOT the last call: `nil` before the first
   response, `{:success? true :data <body>}` after a success, and after a failed call that same
   map with `:success? false` and `:error <failure data>` merged in, so the last good `:data`
-  survives. Bind the UI to `(:data @reaction)`; read failure detail off the `raw-execute`
+  survives. It holds the answer to the latest request SENT to the endpoint: an earlier
+  request answering late never replaces it. Bind the UI to `(:data @reaction)`; read failure detail off the `raw-execute`
   channel result, never off the reaction. Throws if the endpoint was never declared.
 
 ### The canonical SSE pattern
@@ -166,8 +167,11 @@ snapshot and stream):
 
 ### Sharp edges
 
-- The data slot (reaction / app-db) keeps the last successful `:data` across failures — a
-  failed call sets `:success? false` and puts the failure under `:error` there. The channel
+- The data slot (reaction / app-db) is "latest request wins": only the answer to the latest
+  request sent to the endpoint is written, so two concurrent calls with different params
+  cannot both be read off it — take each from its own `raw-execute` channel, which always
+  gets its own result. It keeps the last successful `:data` across failures — a failed
+  latest call sets `:success? false` and puts the failure under `:error` there. The channel
   result is the raw failure either way.
 - `raw-execute` on an `:sse` endpoint throws, as does `subscribe` on a non-`:sse` one.
   `execute` accepts both.

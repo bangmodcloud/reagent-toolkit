@@ -3,6 +3,7 @@
    [bidi.bidi :as bidi]
    [cemerick.url :as cemerick]
    [bangmod.router.db :as db]
+   [bangmod.router.match :as match]
    [bangmod.router.table :as table]
    [pushy.core :as pushy]))
 
@@ -48,16 +49,10 @@
   (reset! db/a-matched-route match))
 
 (defn parse
+  "pushy's matcher: `url` against the registered tables, in `bangmod.router.match/parse`'s
+   shape. `bangmod.router.core/match-path` reads the same match."
   [url]
-  (let [query-params (->> (:query (cemerick/url url))
-                          (map (fn [[k v]] [(keyword k) v]))
-                          (into {}))
-        matched-route (->> @db/a-app-routes
-                           (map (fn [route]
-                                  (bidi/match-route route url)))
-                           (filter (complement nil?))
-                           first (merge {:query-params query-params}))]
-    matched-route))
+  (match/parse @db/a-app-routes url))
 
 ;; `pushy/pushy` builds an Html5History against js/window at construction, so guard it for
 ;; non-DOM contexts (node test runner). In a browser window always exists and this is

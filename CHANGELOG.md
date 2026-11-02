@@ -7,6 +7,28 @@ released at the same version number.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-02
+
+### Added
+
+- **router:** `bangmod.router.core/match-path`. `(match-path path)` returns the route the
+  registered tables give a path (query string allowed), as
+  `{:handler kw :route-params {kw str} :query-params {kw str}}` with both maps `{}` when
+  empty, or `nil` when nothing matches. It runs the same match pushy runs on navigation,
+  needs only `register-routes` (no `start!`, no `js/window`) and changes no state, so a
+  route table can be tested under `:node-test` without reaching into
+  `bangmod.router.internal`.
+- **router:** `bangmod.router.match`, the pure matching half (tables passed in). Both
+  `internal/parse` and `match-path` delegate to it.
+
+### Changed
+
+- **http-api (docs only):** `docs/http-api.md` now lists the public decision functions in
+  `bangmod.http-api.retry` (`token-stale-401?`, `session-over-401?`,
+  `reload-before-reopen?`), so consumers can see they are supported API.
+
+No behaviour change: `internal/parse`, navigation and `url-for` are unchanged.
+
 ## [0.7.0] - 2026-10-30
 
 ### Changed
@@ -183,7 +205,8 @@ released at the same version number.
 - Initial extraction of `reagent-form`, `reagent-http-api` and `reagent-router`
   into a three-module repo.
 
-[Unreleased]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/bangmodcloud/reagent-toolkit/compare/v0.5.0...v0.5.1

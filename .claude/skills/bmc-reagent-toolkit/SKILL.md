@@ -6,14 +6,14 @@ description: Use when writing ClojureScript code against the reagent-toolkit lib
 # reagent-toolkit (bangmod.form / bangmod.http-api / bangmod.router)
 
 Three independent ClojureScript libraries for Reagent/re-frame apps. This skill targets
-**0.7.0**. Docs live in `docs/{form,http-api,router}.md` of
+**0.8.0**. Docs live in `docs/{form,http-api,router}.md` of
 https://github.com/bangmodcloud/reagent-toolkit — trust this skill for signatures; read the
 source under `modules/*/src/bangmod/` only when something here doesn't cover it.
 
 ```clojure
-{:deps {io.github.bangmodcloud/reagent-form     {:mvn/version "0.7.0"}
-        io.github.bangmodcloud/reagent-http-api {:mvn/version "0.7.0"}
-        io.github.bangmodcloud/reagent-router   {:mvn/version "0.7.0"}}}
+{:deps {io.github.bangmodcloud/reagent-form     {:mvn/version "0.8.0"}
+        io.github.bangmodcloud/reagent-http-api {:mvn/version "0.8.0"}
+        io.github.bangmodcloud/reagent-router   {:mvn/version "0.8.0"}}}
 ```
 
 They do not depend on each other — add only what the task needs.
@@ -40,6 +40,10 @@ Boot order is the one rule: every feature calls `register-routes` first, then th
   component mid-render).
 - `(router/url-for :project-detail :id 42)` → `"/projects/42"`; append
   `{:query {:tab "logs"}}` as a final map arg for a query string.
+- `(router/match-path "/projects/42?tab=logs")` →
+  `{:handler :project-detail :route-params {:id "42"} :query-params {:tab "logs"}}`, or
+  `nil` when nothing matches. It makes the same match as navigation and needs only
+  `register-routes` (no `start!`, no browser). Use it to test a route table.
 - `@router/atom-params`, `@router/atom-query-params`, `@router/atom-matched-route` —
   reagent reactions over the current route.
 - `(router/registration-report)` — dev check; returns `{:routed :registered :duplicates
@@ -69,8 +73,10 @@ throw at `register-routes` time.
   first-registered wins.
 - A routed keyword with no component renders the default component silently; catch with
   `registration-report`.
-- Browser-only (`pushy` needs `js/window`) — do not load `bangmod.router.internal` in a
-  node test build. `bangmod.router.table` (the pure compile half) is loadable anywhere.
+- `start!`/`navigate!` need a browser; matching does not. Never call
+  `bangmod.router.internal` (e.g. `internal/parse`) from app code or tests; use
+  `router/match-path`. `bangmod.router.table` (compile) and `bangmod.router.match` (match)
+  are the pure halves, loadable anywhere.
 
 ## bangmod.http-api
 
@@ -186,6 +192,9 @@ snapshot and stream):
   once the server has sent an `id:`. Cross-origin SSE needs CORS to allow `Authorization`.
 - Pure/testable halves: `bangmod.http-api.sse` and `bangmod.http-api.retry` load without a
   browser; `bangmod.http-api.internal` requires `ajax.core` (needs `js/XMLHttpRequest`).
+  Public decision fns in `retry`: `(token-stale-401? result)` (401 `token-stale`: reload
+  and retry once), `(session-over-401? result)` (any other 401: the session is over),
+  `(reload-before-reopen? reason)` (SSE `reconnect` reason needs a token reload first).
 
 ## bangmod.form
 

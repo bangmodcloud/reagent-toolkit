@@ -123,6 +123,19 @@ stays closed (see [Reconnecting](#reconnecting)).
 | `(init)` | Wires re-frame integration: every response/SSE update mirrors into `[:_http-api :data]` in the app-db. Optional — `execute`/`raw-execute`/`subscribe`/`get-data-reaction` work without it. |
 | `(get-data-reaction api-name endpoint-name)` | Reagent reaction over an endpoint's stored slot, without firing anything: `@(http-api/get-data-reaction :account :get)`. `nil` before the first response. Holds the answer to the latest request sent to the endpoint; an answer to an earlier request never replaces it. Throws if the endpoint was never declared. |
 
+`bangmod.http-api.retry`: the pure decision functions behind the two 401 hooks and the SSE
+reconnect. They are public and safe to call, and they load without ajax or a browser, so you
+can unit test them under `:node-test`.
+
+| Function | Decides |
+| --- | --- |
+| `(token-stale-401? result)` | Is this failed result a 401 with `{:reason "token-stale"}`, meaning reload the token and retry once? This is what triggers `set-token-stale-handler!`. |
+| `(session-over-401? result)` | Is this failed result a 401 that a token reload cannot fix (any 401 that is not `token-stale`)? This is what triggers `set-unauthorized-handler!`. |
+| `(reload-before-reopen? reason)` | Must the token be reloaded before re-opening an SSE stream the server closed with this `reconnect` reason? True only for `"token-stale"`. |
+
+`result` is a `raw-execute` channel result (`{:success? false :data {:status 401 :response
+{...}}}`; the failed body sits under `[:data :response]`).
+
 `endpoints-spec` per-endpoint keys:
 
 - `:method` — `:get`, `:post`, `:put`, `:patch`, `:delete`, or `:sse` (opened with

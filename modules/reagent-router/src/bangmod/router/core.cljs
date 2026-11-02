@@ -1,6 +1,7 @@
 (ns bangmod.router.core
   (:require [bangmod.router.internal :as router-internal]
             [bangmod.router.db :as db]
+            [bangmod.router.match :as match]
             [bangmod.router.table :as table]
             [reagent.ratom :as ratom]))
 
@@ -19,6 +20,23 @@
 (defn navigate!
   [handler]
   (router-internal/navigate! handler))
+
+(defn match-path
+  "The route the registered table gives `path` (a path with an optional query string, as the
+   browser's location would hold it): `{:handler kw :route-params {kw string} :query-params
+   {kw string}}`, or nil when no route matches. Both param maps are `{}` when there are none.
+   Reads only the tables `register-routes` installed; needs no browser, no `start!`, and
+   changes no state.
+
+   It is the match navigation makes (the same code pushy calls), so when two registered
+   tables match one path, the table registered first wins here as it does on screen.
+
+     (match-path \"/projects/42?tab=logs\")
+     ;; => {:handler :project-detail :route-params {:id \"42\"} :query-params {:tab \"logs\"}}
+     (match-path \"/nowhere\")
+     ;; => nil"
+  [path]
+  (match/match-path @db/a-app-routes path))
 
 (defn registration-report
   "{:routed [...] :registered [...] :duplicates [...] :orphan-routes [...] :orphan-registrations [...]}

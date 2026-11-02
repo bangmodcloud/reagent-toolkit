@@ -176,6 +176,35 @@ The typical case is a redirect once some state arrives:
       :reagent-render       (fn [] [login-form])})))
 ```
 
+## Matching a path: `match-path`
+
+`match-path` asks the registered tables which route a path opens, without navigating. It is
+the match navigation makes, so it answers exactly what the browser would show. It is meant
+for testing a route table ("this URL opens that screen, with these params"):
+
+```clojure
+(router/register-routes
+  ["/projects" {""                  [:projects       view/list-page]
+                ["/" :id "/cycles"] [:project-cycles view/cycles-page]}])
+
+(router/match-path "/projects/pr-1/cycles?tab=open")
+;; => {:handler :project-cycles :route-params {:id "pr-1"} :query-params {:tab "open"}}
+
+(router/match-path "/projects")
+;; => {:handler :projects :route-params {} :query-params {}}
+
+(router/match-path "/nowhere")
+;; => nil
+```
+
+The result always has exactly these three keys: `:route-params` and `:query-params` are `{}`
+when there are none, and both hold strings. A path no table matches returns `nil`, not a map
+with a nil `:handler`. When two tables match the same path, the first registered wins, as
+it does on screen.
+
+`register-routes` is the only setup it needs. It needs no `start!`, no `js/window`, and
+changes no state, so it runs under shadow-cljs `:node-test`.
+
 ## Unmatched URLs and the default component
 
 `start!`'s `:default-component` renders whenever the URL matches no table — a 404 page,
@@ -220,6 +249,7 @@ later component wins, because a white screen is worse than a shadowed route.
 | `(register-routes table)` | Adds one route table. Call per feature, before `start!`. Throws on a malformed table. |
 | `(start! {:default-component c})` | Once, after every `register-routes`: installs the fallback, mirrors route state into re-frame, starts listening to history and matches the current URL. |
 | `(url-for kw & path-params {:query {...}}?)` | The path for a route: `(url-for :project-detail :id 42)`. Optional trailing `{:query m}` appends a query string. |
+| `(match-path path)` | The route the registered tables give `path` (query string allowed): `{:handler kw :route-params {kw str} :query-params {kw str}}`, or `nil` when nothing matches. No browser or `start!` needed; changes no state. See [above](#matching-a-path-match-path). |
 | `(navigate! kw-or-path)` | Push the URL for a route keyword, or a literal path, and re-match. Not from a render fn. |
 | `atom-matched-route` | Reaction: current handler keyword, `:default` when unmatched. |
 | `atom-params` | Reaction: path parameters map. |
@@ -247,6 +277,9 @@ later component wins, because a white screen is worse than a shadowed route.
   point at this origin, matched or not; an unmatched one renders the default component
   rather than loading the page. Left to the browser: other origins, `target="_blank"` /
   `"_self"`, modifier- or non-left-clicks, and anything with `data-pushy-ignore`.
-- **Browser only.** `bangmod.router.internal` needs `js/window` at load time (pushy). The
-  pure route-compilation half, `bangmod.router.table`, loads anywhere and is what the unit
-  tests cover.
+- **`start!` and `navigate!` need a browser; matching does not.** pushy's history is built
+  only when `js/window` exists, so `bangmod.router.core` loads in a node test build that
+  can load reagent, and `register-routes` + `match-path` work there. Test a route table
+  through `match-path`, not through `bangmod.router.internal`. The pure halves,
+  `bangmod.router.table` (compiling) and `bangmod.router.match` (matching), need neither
+  reagent nor pushy.
